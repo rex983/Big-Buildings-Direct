@@ -1,0 +1,717 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ============================================
+// User & Authentication
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  phone         String?
+  avatar        String?
+  isActive      Boolean   @default(true)
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  // Orders (as customer)
+  customerOrders Order[] @relation("CustomerOrders")
+
+  // Orders (as sales rep)
+  salesRepOrders Order[] @relation("SalesRepOrders")
+
+  // Files uploaded
+  files File[]
+
+  // Messages sent
+  messagesSent Message[]
+
+  // Emails sent
+  emailsSent Email[] @relation("EmailsSent")
+
+  // Activities performed
+  activities OrderActivity[]
+
+  // Documents created
+  documentsCreated Document[] @relation("DocumentCreator")
+
+  // Documents signed
+  documentsSigned Document[] @relation("DocumentSigner")
+
+  // Password reset tokens
+  passwordResetTokens PasswordResetToken[]
+
+  // Revisions (as sales rep)
+  revisions Revision[] @relation("RevisionSalesRep")
+
+  // Order Changes (as sales rep)
+  orderChanges OrderChange[] @relation("OrderChangeSalesRep")
+
+  // Tickets
+  ticketsCreated   Ticket[] @relation("TicketCreator")
+  ticketsAssigned  Ticket[] @relation("TicketAssignee")
+  ticketNotes      TicketNote[]
+  ticketActivities TicketActivity[]
+
+  @@index([email])
+  @@index([roleId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+// ============================================
+// Roles & Permissions
+// ============================================
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users       User[]
+  permissions RolePermission[]
+
+  @@index([name])
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  category    String
+  description String?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  roles RolePermission[]
+
+  @@index([name])
+  @@index([category])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+// ============================================
+// Orders
+// ============================================
+
+model Order {
+  id               String   @id @default(cuid())
+  orderNumber      String   @unique
+
+  // Customer info
+  customerName     String
+  customerEmail    String
+  customerPhone    String?
+
+  // Building details
+  buildingType     String
+  buildingSize     String
+  buildingWidth    String?
+  buildingLength   String?
+  buildingHeight   String?
+  buildingColor    String?
+  buildingOptions  String?  // JSON string
+  foundationType   String?  // Concrete, Gravel, Ground, Asphalt, etc.
+  lullLiftRequired Boolean  @default(false)
+
+  // Delivery info
+  deliveryAddress  String
+  deliveryCity     String
+  deliveryState    String
+  deliveryZip      String
+  deliveryNotes    String?
+
+  // Permit info
+  permitStructure      String?  // Customer Pulling Permit, Customer Not Pulling Permit, etc.
+  customerReadyStatus  String?  // Customer Land Not Ready, Ready For Install, etc.
+  permitType           String?  // Generic Engineered Drawings, No Permit, etc.
+
+  // Installer
+  installer        String?
+
+  // Financial
+  totalPrice       Decimal
+  depositAmount    Decimal
+  depositCollected Boolean  @default(false)
+  depositDate      DateTime?
+  depositChargeStatus String? // Accepted, Accepted after decline, etc.
+  depositPercentage   String?
+
+  // Status (ACTIVE, COMPLETED, CANCELLED, ON_HOLD)
+  status           String   @default("ACTIVE")
+  // Priority (LOW, NORMAL, HIGH, URGENT)
+  priority         String   @default("NORMAL")
+
+  // Workflow tracking
+  sentToCustomer      Boolean  @default(false)
+  sentToCustomerDate  DateTime?
+  customerSigned      Boolean  @default(false)
+  customerSignedDate  DateTime?
+  sentToManufacturer  Boolean  @default(false)
+  sentToManufacturerDate DateTime?
+
+  // BST Workflow tracking (post-manufacturer)
+  wcStatus             String?   // "Pending", "No Contact Made", "Contact Made"
+  wcStatusDate         DateTime?
+  lppStatus            String?   // "Pending", "Ready for Install"
+  lppStatusDate        DateTime?
+
+  // External links
+  submittedFormsUrl   String?
+  sabrinaFormsUrl     String?
+
+  // Notes
+  specialNotes        String?
+  paymentNotes        String?
+
+  // Revisions tracking
+  revisionOf          String?  // Order number this is a revision of
+
+  // Timestamps
+  dateSold         DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  cancelReason     String?
+
+  // Relations
+  customerId String?
+  customer   User?   @relation("CustomerOrders", fields: [customerId], references: [id])
+
+  salesRepId String?
+  salesRep   User?   @relation("SalesRepOrders", fields: [salesRepId], references: [id])
+
+  currentStageId String?
+  currentStage   OrderStage? @relation("CurrentStage", fields: [currentStageId], references: [id])
+
+  // History and related data
+  stageHistory   OrderStageHistory[]
+  activities     OrderActivity[]
+  files          OrderFile[]
+  documents      Document[]
+  messages       Message[]
+  emails         Email[]
+  revisions      Revision[]
+  orderChanges   OrderChange[]
+  tickets        Ticket[]
+
+  @@index([orderNumber])
+  @@index([customerId])
+  @@index([salesRepId])
+  @@index([currentStageId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([installer])
+  @@index([dateSold])
+  @@index([wcStatus])
+  @@index([lppStatus])
+}
+
+// ============================================
+// Order Stages (Workflow)
+// ============================================
+
+model OrderStage {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  sortOrder   Int
+  color       String   @default("#6B7280")
+  isDefault   Boolean  @default(false)
+  isFinal     Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  currentOrders Order[] @relation("CurrentStage")
+  stageHistory  OrderStageHistory[]
+
+  @@index([sortOrder])
+}
+
+model OrderStageHistory {
+  id        String   @id @default(cuid())
+  notes     String?
+  createdAt DateTime @default(now())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  stageId String
+  stage   OrderStage @relation(fields: [stageId], references: [id])
+
+  changedById String?
+
+  @@index([orderId])
+  @@index([stageId])
+  @@index([createdAt])
+}
+
+// ============================================
+// Order Activity (Audit Trail)
+// ============================================
+
+model OrderActivity {
+  id          String   @id @default(cuid())
+  type        String   // ActivityType as string
+  description String
+  metadata    String?  // JSON string
+  createdAt   DateTime @default(now())
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ============================================
+// Order Revisions
+// ============================================
+
+model Revision {
+  id                  String    @id @default(cuid())
+  revisionNumber      String    // Revision1, Revision2, etc.
+  revisionDate        DateTime
+
+  // Price changes
+  changeInPrice       String?   // "Change In Deposit Total", "No Change In Deposit Total"
+  oldOrderTotal       Decimal?
+  newOrderTotal       Decimal?
+  oldDepositTotal     Decimal?
+  newDepositTotal     Decimal?
+  orderTotalDiff      Decimal?
+  depositDiff         Decimal?
+  revisionFee         Decimal?
+  totalCharge         Decimal?
+
+  // Customer info (may differ from order)
+  orderFormName       String?
+  customerEmail       String?
+
+  // Manufacturer change
+  changingManufacturer Boolean  @default(false)
+  originalManufacturer String?
+  newManufacturer      String?
+  newManufacturerEmail String?
+
+  // Workflow tracking
+  sentToCustomer       Boolean  @default(false)
+  customerSigned       Boolean  @default(false)
+  sentToManufacturer   Boolean  @default(false)
+
+  // Timestamps for workflow
+  lastEditedSTC        DateTime?
+  lastEditedSigned     DateTime?
+  lastEditedSTM        DateTime?
+  lastUpdateDepOT      DateTime?
+
+  // Forms and notes
+  formsSubmittedUrl    String?
+  sabrinaFormsUrl      String?
+  revisionNotes        String?
+  repNotes             String?
+
+  // Deposit charge status
+  depositCharge        String?
+  paymentMethod        String?   // "Credit Card", "ACH/Bank Transfer", "Check", "Cash", "Other"
+
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // Relations
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  salesRepId String?
+  salesRep   User?   @relation("RevisionSalesRep", fields: [salesRepId], references: [id])
+
+  files RevisionFile[]
+
+  @@index([orderId])
+  @@index([salesRepId])
+  @@index([revisionDate])
+  @@index([revisionNumber])
+}
+
+// ============================================
+// Order Changes (separate from Revisions)
+// ============================================
+
+model OrderChange {
+  id                  String    @id @default(cuid())
+  changeDate          DateTime
+
+  // Price changes
+  oldOrderTotal       Decimal?
+  newOrderTotal       Decimal?
+  oldDepositTotal     Decimal?
+  newDepositTotal     Decimal?
+  orderTotalDiff      Decimal?
+  depositDiff         Decimal?
+
+  // Customer/Order info
+  orderFormName       String?
+  manufacturer        String?
+  customerEmail       String?
+
+  // Change details
+  changeType          String?   // "Building Update", "Information Update", "Changing Manufacturer", "Other"
+  additionalNotes     String?
+  uploadsUrl          String?   // Google Drive link
+
+  // Deposit charge status
+  depositCharged      String?   // "no charge needed", "Accepted", "Accepted-S", "Refunded", "Refunded-S", etc.
+
+  // Workflow tracking
+  sabrinaProcess      Boolean   @default(false)
+  updatedInNewSale    Boolean   @default(false)
+  rexProcess          String?   // "Complete", etc.
+
+  // Cross-reference fields (from CSV)
+  newSalesRef         String?   // Order number reference
+  revisionsRef        String?   // Revision reference
+  cancellationsRef    String?   // Cancellation reference
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // Relations
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  salesRepId String?
+  salesRep   User?   @relation("OrderChangeSalesRep", fields: [salesRepId], references: [id])
+
+  @@index([orderId])
+  @@index([salesRepId])
+  @@index([changeDate])
+  @@index([changeType])
+}
+
+// ============================================
+// Files
+// ============================================
+
+model File {
+  id           String   @id @default(cuid())
+  filename     String
+  storagePath  String
+  mimeType     String
+  size         Int
+  category     String   @default("OTHER") // FileCategory as string
+  description  String?
+  createdAt    DateTime @default(now())
+
+  uploadedById String
+  uploadedBy   User   @relation(fields: [uploadedById], references: [id])
+
+  // Relations
+  orderFiles    OrderFile[]
+  ticketFiles   TicketFile[]
+  revisionFiles RevisionFile[]
+  documents     Document[]
+
+  @@index([uploadedById])
+  @@index([category])
+}
+
+model OrderFile {
+  orderId   String
+  fileId    String
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  file  File  @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@id([orderId, fileId])
+}
+
+model TicketFile {
+  id        String   @id @default(cuid())
+  ticketId  String
+  fileId    String
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  file      File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([fileId])
+}
+
+model RevisionFile {
+  id         String   @id @default(cuid())
+  revisionId String
+  fileId     String
+  revision   Revision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  file       File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@index([revisionId])
+  @@index([fileId])
+}
+
+// ============================================
+// Documents (for signing)
+// ============================================
+
+model Document {
+  id          String   @id @default(cuid())
+  title       String
+  status      String   @default("DRAFT") // DocumentStatus as string
+
+  // Signing audit trail
+  sentAt      DateTime?
+  viewedAt    DateTime?
+  signedAt    DateTime?
+  signerIp    String?
+  signerAgent String?
+
+  // Signature data
+  signatureData String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  fileId String
+  file   File   @relation(fields: [fileId], references: [id])
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User   @relation("DocumentCreator", fields: [createdById], references: [id])
+
+  signedById String?
+  signedBy   User?   @relation("DocumentSigner", fields: [signedById], references: [id])
+
+  // Unique signing token
+  signingToken String? @unique
+
+  @@index([orderId])
+  @@index([signingToken])
+  @@index([status])
+}
+
+// ============================================
+// Messaging
+// ============================================
+
+model Message {
+  id         String   @id @default(cuid())
+  content    String
+  isInternal Boolean  @default(false)
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   User   @relation(fields: [senderId], references: [id])
+
+  // Thread support
+  parentId String?
+  parent   Message?  @relation("MessageReplies", fields: [parentId], references: [id])
+  replies  Message[] @relation("MessageReplies")
+
+  @@index([orderId])
+  @@index([senderId])
+  @@index([parentId])
+  @@index([createdAt])
+}
+
+// ============================================
+// Email Tracking
+// ============================================
+
+model Email {
+  id          String   @id @default(cuid())
+  subject     String
+  body        String
+  toAddress   String
+  fromAddress String
+
+  // Status tracking (QUEUED, SENT, DELIVERED, OPENED, FAILED, BOUNCED)
+  status      String   @default("QUEUED")
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  openedAt    DateTime?
+  failedAt    DateTime?
+  failReason  String?
+
+  // External tracking
+  externalId  String?
+
+  // Direction (INBOUND, OUTBOUND)
+  direction   String   @default("OUTBOUND")
+
+  createdAt   DateTime @default(now())
+
+  // Relations
+  orderId String?
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  sentById String?
+  sentBy   User?   @relation("EmailsSent", fields: [sentById], references: [id])
+
+  @@index([orderId])
+  @@index([sentById])
+  @@index([status])
+  @@index([toAddress])
+}
+
+// ============================================
+// Manufacturers
+// ============================================
+
+model Manufacturer {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+}
+
+// ============================================
+// Tickets (BST Workflow)
+// ============================================
+
+model Ticket {
+  id            String   @id @default(cuid())
+  ticketNumber  String   @unique  // TKT-00001 format
+
+  // Ticket details
+  subject       String
+  description   String?
+
+  // Type: WELCOME_CALL, LPP, BUILDING_UPDATE, INFO_UPDATE, MANUFACTURER_CHANGE, OTHER
+  type          String   @default("OTHER")
+
+  // Status: OPEN, IN_PROGRESS, PENDING, RESOLVED, CLOSED
+  status        String   @default("OPEN")
+
+  // Priority: LOW, NORMAL, HIGH, URGENT
+  priority      String   @default("NORMAL")
+
+  // Resolution
+  resolution    String?
+  resolvedAt    DateTime?
+  closedAt      DateTime?
+
+  // Timestamps
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User   @relation("TicketCreator", fields: [createdById], references: [id])
+
+  assignedToId String?
+  assignedTo   User?   @relation("TicketAssignee", fields: [assignedToId], references: [id])
+
+  // Related data
+  notes      TicketNote[]
+  activities TicketActivity[]
+  files      TicketFile[]
+
+  @@index([ticketNumber])
+  @@index([orderId])
+  @@index([createdById])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([type])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+model TicketNote {
+  id        String   @id @default(cuid())
+  content   String
+  isInternal Boolean @default(false)  // Internal notes not visible to customer
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  authorId String
+  author   User   @relation(fields: [authorId], references: [id])
+
+  @@index([ticketId])
+  @@index([authorId])
+  @@index([createdAt])
+}
+
+model TicketActivity {
+  id          String   @id @default(cuid())
+  action      String   // CREATED, STATUS_CHANGED, ASSIGNED, NOTE_ADDED, PRIORITY_CHANGED, RESOLVED, CLOSED, REOPENED
+  description String
+  metadata    String?  // JSON string with old/new values
+  createdAt   DateTime @default(now())
+
+  // Relations
+  ticketId String
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([ticketId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+}
