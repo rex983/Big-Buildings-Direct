@@ -4,12 +4,19 @@ import { requirePermission } from "@/lib/auth";
 
 export async function GET() {
   try {
-    await requirePermission("orders.view");
+    const user = await requirePermission("orders.view");
+
+    const isAdmin = user.roleName === "Admin";
+    const isManager = user.roleName === "Manager";
+    const canViewAll = user.permissions.includes("orders.view_all");
+    const hasFullAccess = isAdmin || isManager || canViewAll;
+
+    const whereClause = hasFullAccess
+      ? { status: { not: "CANCELLED" } as const }
+      : { status: { not: "CANCELLED" } as const, salesRepId: user.id };
 
     const orders = await prisma.order.findMany({
-      where: {
-        status: { not: "CANCELLED" },
-      },
+      where: whereClause,
       select: {
         id: true,
         orderNumber: true,
