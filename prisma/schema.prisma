@@ -19,6 +19,7 @@ model User {
   lastName      String
   phone         String?
   avatar        String?
+  office        String?   // "Marion Office" or "Harbor Office"
   isActive      Boolean   @default(true)
   emailVerified DateTime?
   createdAt     DateTime  @default(now())
@@ -66,6 +67,13 @@ model User {
   ticketsAssigned  Ticket[] @relation("TicketAssignee")
   ticketNotes      TicketNote[]
   ticketActivities TicketActivity[]
+
+  // Pay
+  payPlans         PayPlan[]    @relation("PayPlanSalesRep")
+  payPlansCreated  PayPlan[]    @relation("PayPlanCreator")
+  payLedgerEntries PayLedger[]  @relation("PayLedgerSalesRep")
+  payLedgerReviewed PayLedger[] @relation("PayLedgerReviewer")
+  payAuditLogs     PayAuditLog[] @relation("PayAuditLogUser")
 
   @@index([email])
   @@index([roleId])
@@ -714,4 +722,120 @@ model TicketActivity {
   @@index([userId])
   @@index([createdAt])
   @@index([action])
+}
+
+// ============================================
+// Pay Management
+// ============================================
+
+model PayPlan {
+  id          String   @id @default(cuid())
+  month       Int      // 1-12
+  year        Int
+  salary      Decimal  @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  salesRepId  String
+  salesRep    User     @relation("PayPlanSalesRep", fields: [salesRepId], references: [id])
+
+  createdById String
+  createdBy   User     @relation("PayPlanCreator", fields: [createdById], references: [id])
+
+  lineItems   PayPlanLineItem[]
+
+  @@unique([month, year, salesRepId])
+  @@index([salesRepId])
+  @@index([month, year])
+}
+
+model PayPlanLineItem {
+  id        String   @id @default(cuid())
+  name      String
+  amount    Decimal
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  payPlanId String
+  payPlan   PayPlan  @relation(fields: [payPlanId], references: [id], onDelete: Cascade)
+
+  @@index([payPlanId])
+}
+
+model PayLedger {
+  id               String   @id @default(cuid())
+  month            Int
+  year             Int
+  buildingsSold    Int      @default(0)
+  totalOrderAmount Decimal  @default(0)
+  planTotal        Decimal  @default(0)
+  adjustment       Decimal  @default(0)
+  adjustmentNote   String?
+  finalAmount      Decimal  @default(0)
+  status           String   @default("PENDING") // PENDING, REVIEWED, APPROVED
+  notes            String?
+  reviewedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  salesRepId   String
+  salesRep     User     @relation("PayLedgerSalesRep", fields: [salesRepId], references: [id])
+
+  reviewedById String?
+  reviewedBy   User?    @relation("PayLedgerReviewer", fields: [reviewedById], references: [id])
+
+  @@unique([month, year, salesRepId])
+  @@index([salesRepId])
+  @@index([month, year])
+  @@index([status])
+}
+
+model OfficePayPlan {
+  id        String   @id @default(cuid())
+  office    String   // "Marion Office" or "Harbor Office"
+  month     Int
+  year      Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tiers     OfficePayPlanTier[]
+
+  @@unique([office, month, year])
+  @@index([office])
+  @@index([month, year])
+}
+
+model OfficePayPlanTier {
+  id              String   @id @default(cuid())
+  type            String   // "BUILDINGS_SOLD" or "ORDER_TOTAL"
+  minValue        Decimal
+  maxValue        Decimal? // null = unlimited (e.g. "11+")
+  bonusAmount     Decimal  // payout for this tier
+  bonusType       String   @default("FLAT") // "FLAT" or "PERCENTAGE"
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  officePayPlanId String
+  officePayPlan   OfficePayPlan @relation(fields: [officePayPlanId], references: [id], onDelete: Cascade)
+
+  @@index([officePayPlanId])
+}
+
+model PayAuditLog {
+  id          String   @id @default(cuid())
+  action      String   // "SALARY_UPDATED", "OFFICE_TIERS_UPDATED", "LEDGER_GENERATED", "LEDGER_ADJUSTED"
+  description String
+  metadata    String?  // JSON with details (old/new values, etc.)
+  createdAt   DateTime @default(now())
+
+  userId      String
+  user        User     @relation("PayAuditLogUser", fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@index([userId])
 }
