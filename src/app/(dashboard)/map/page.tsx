@@ -15,7 +15,6 @@ interface OrderLocation {
   deliveryCity: string;
   deliveryState: string;
   deliveryZip: string;
-  status: string;
   totalPrice: string;
   installer: string | null;
   dateSold: string | null;
@@ -91,7 +90,6 @@ export default function MapPage() {
   const [filterManufacturer, setFilterManufacturer] = useState<string>("all");
   const [filterRep, setFilterRep] = useState<string>("all");
   const [filterYear, setFilterYear] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filtersOpen, setFiltersOpen] = useState(true);
 
   // Derive unique values for filter dropdowns
@@ -135,10 +133,9 @@ export default function MapPage() {
         if (!o.dateSold) return false;
         if (new Date(o.dateSold).getFullYear().toString() !== filterYear) return false;
       }
-      if (filterStatus !== "all" && o.status !== filterStatus) return false;
       return true;
     });
-  }, [allOrders, filterManufacturer, filterRep, filterYear, filterStatus]);
+  }, [allOrders, filterManufacturer, filterRep, filterYear]);
 
   // Dynamically import Leaflet + CSS (avoids "window is not defined" SSR error)
   const initMap = useCallback(async () => {
@@ -305,7 +302,6 @@ export default function MapPage() {
           </div>
           <div style="font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px;">
             <span style="background: ${color}; color: white; padding: 1px 6px; border-radius: 4px; font-size: 11px;">${mfr}</span>
-            <span style="color: #6b7280; font-size: 11px;">${order.status}</span>
           </div>
           ${order.buildingType ? `<div style="font-size: 12px; color: #6b7280;">${order.buildingType} ${order.buildingSize}</div>` : ""}
           <div style="font-size: 12px; color: #6b7280; margin-top: 2px;">Rep: ${rep}</div>
@@ -329,10 +325,9 @@ export default function MapPage() {
     setFilterManufacturer("all");
     setFilterRep("all");
     setFilterYear("all");
-    setFilterStatus("all");
   };
 
-  const hasActiveFilters = filterManufacturer !== "all" || filterRep !== "all" || filterYear !== "all" || filterStatus !== "all";
+  const hasActiveFilters = filterManufacturer !== "all" || filterRep !== "all" || filterYear !== "all";
   const visiblePinCount = markersRef.current.length;
 
   return (
@@ -372,7 +367,7 @@ export default function MapPage() {
               Filters
               {hasActiveFilters && (
                 <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary text-primary-foreground text-xs">
-                  {[filterManufacturer, filterRep, filterYear, filterStatus].filter((f) => f !== "all").length}
+                  {[filterManufacturer, filterRep, filterYear].filter((f) => f !== "all").length}
                 </span>
               )}
             </button>
@@ -384,7 +379,7 @@ export default function MapPage() {
           </div>
 
           {filtersOpen && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">Manufacturer</label>
                 <select
@@ -428,19 +423,6 @@ export default function MapPage() {
                 </select>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">Status</label>
-                <select
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="all">All Statuses</option>
-                  <option value="ACTIVE">Active</option>
-                  <option value="COMPLETED">Completed</option>
-                  <option value="ON_HOLD">On Hold</option>
-                </select>
-              </div>
             </div>
           )}
         </CardContent>

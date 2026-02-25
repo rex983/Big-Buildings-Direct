@@ -1,18 +1,10 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
-
-async function getCustomerOrders(customerId: string) {
-  return prisma.order.findMany({
-    where: { customerId },
-    include: { currentStage: true },
-    orderBy: { createdAt: "desc" },
-  });
-}
+import { getOrdersByCustomerEmail } from "@/lib/order-process";
 
 export default async function MyOrdersPage() {
   const session = await auth();
@@ -25,7 +17,8 @@ export default async function MyOrdersPage() {
     redirect("/dashboard");
   }
 
-  const orders = await getCustomerOrders(session.user.id);
+  // Fetch all orders from Order Process by customer email
+  const orders = await getOrdersByCustomerEmail(session.user.email);
 
   return (
     <div className="space-y-6">
@@ -57,25 +50,20 @@ export default async function MyOrdersPage() {
                     <div className="flex items-center gap-3">
                       <p className="font-medium">{order.orderNumber}</p>
                       <Badge
-                        variant={
-                          order.status === "ACTIVE"
-                            ? "info"
-                            : order.status === "COMPLETED"
-                              ? "success"
-                              : order.status === "CANCELLED"
-                                ? "destructive"
-                                : "secondary"
-                        }
+                        variant="outline"
+                        style={{
+                          borderColor: order.currentStage.color,
+                          color: order.currentStage.color,
+                        }}
                       >
-                        {order.status}
+                        {order.currentStage.name}
                       </Badge>
                     </div>
                     <p className="text-sm text-muted-foreground mt-1">
                       {order.buildingType} - {order.buildingSize}
-                      {order.buildingColor && ` - ${order.buildingColor}`}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      Delivery: {order.deliveryCity}, {order.deliveryState}
+                      Delivery: {order.deliveryState}
                     </p>
                     <p className="text-xs text-muted-foreground mt-2">
                       Ordered {formatDate(order.createdAt)}
@@ -83,16 +71,14 @@ export default async function MyOrdersPage() {
                   </div>
                   <div className="text-right">
                     <p className="font-medium text-lg">
-                      {formatCurrency(order.totalPrice.toString())}
+                      {formatCurrency(order.totalPrice)}
                     </p>
-                    {order.currentStage && (
-                      <p
-                        className="text-sm mt-1"
-                        style={{ color: order.currentStage.color }}
-                      >
-                        {order.currentStage.name}
-                      </p>
-                    )}
+                    <p
+                      className="text-sm mt-1"
+                      style={{ color: order.currentStage.color }}
+                    >
+                      {order.currentStage.name}
+                    </p>
                   </div>
                 </Link>
               ))}

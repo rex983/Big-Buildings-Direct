@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { auth, signOut } from "@/lib/auth";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
+import { RealtimeOrdersRefresh } from "@/components/features/orders/realtime-orders-refresh";
 
 export default async function PortalLayout({
   children,
@@ -19,6 +20,7 @@ export default async function PortalLayout({
 
   return (
     <>
+      <RealtimeOrdersRefresh />
       <ImpersonationBanner />
       <div className="min-h-screen bg-muted/30">
         {/* Header */}

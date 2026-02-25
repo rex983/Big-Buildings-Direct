@@ -74,11 +74,11 @@ export async function GET(request: NextRequest) {
 
     const salesRepMap = new Map(salesReps.map((u) => [u.id, `${u.firstName} ${u.lastName}`]));
 
-    // Format state data (filter out nulls)
+    // Format state data (filter out nulls, keep raw DB values for accurate filtering)
     const stateData = stateAgg
       .filter((row) => row.deliveryState)
       .map((row) => ({
-        state: row.deliveryState!.toUpperCase(),
+        state: row.deliveryState!,
         quantity: row._count.id,
         totalAmount: row._sum.totalPrice?.toNumber() || 0,
       }))

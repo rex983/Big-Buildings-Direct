@@ -70,31 +70,40 @@ async function getTickets(searchParams: SearchParams, userId: string) {
     ];
   }
 
-  const tickets = await prisma.ticket.findMany({
-    where,
-    include: {
-      order: {
-        select: {
-          id: true,
-          orderNumber: true,
-          customerName: true,
-          customerPhone: true,
+  const page = parseInt(searchParams.page || "1", 10);
+  const pageSize = 50;
+  const skip = (page - 1) * pageSize;
+
+  const [tickets, total] = await Promise.all([
+    prisma.ticket.findMany({
+      where,
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            customerName: true,
+            customerPhone: true,
+          },
+        },
+        createdBy: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        assignedTo: {
+          select: { id: true, firstName: true, lastName: true },
+        },
+        _count: {
+          select: { notes: true },
         },
       },
-      createdBy: {
-        select: { id: true, firstName: true, lastName: true },
-      },
-      assignedTo: {
-        select: { id: true, firstName: true, lastName: true },
-      },
-      _count: {
-        select: { notes: true },
-      },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+      orderBy: { createdAt: "desc" },
+      skip,
+      take: pageSize,
+    }),
+    prisma.ticket.count({ where }),
+  ]);
 
-  return tickets;
+  return { tickets, total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
 }
 
 async function getTicketStats(userId: string) {
@@ -123,10 +132,11 @@ export default async function TicketsPage({
   }
 
   const params = await searchParams;
-  const [tickets, stats] = await Promise.all([
+  const [ticketResult, stats] = await Promise.all([
     getTickets(params, user.id),
     getTicketStats(user.id),
   ]);
+  const { tickets, total, page, totalPages } = ticketResult;
 
   return (
     <div className="space-y-6">
@@ -134,7 +144,7 @@ export default async function TicketsPage({
         <div>
           <h1 className="text-3xl font-bold">Tickets</h1>
           <p className="text-muted-foreground">
-            Manage support tickets for orders ({tickets.length} total)
+            Manage support tickets for orders ({total} total)
           </p>
         </div>
       </div>
@@ -254,6 +264,31 @@ export default async function TicketsPage({
 
       {/* Grouped Tickets */}
       <TicketGroupedList tickets={JSON.parse(JSON.stringify(tickets))} />
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            Page {page} of {totalPages} ({total} tickets)
+          </p>
+          <div className="flex gap-2">
+            {page > 1 && (
+              <Link
+                href={`/tickets?page=${page - 1}&search=${params.search || ""}&status=${params.status || ""}&type=${params.type || ""}&priority=${params.priority || ""}`}
+              >
+                <Button variant="outline" size="sm">Previous</Button>
+              </Link>
+            )}
+            {page < totalPages && (
+              <Link
+                href={`/tickets?page=${page + 1}&search=${params.search || ""}&status=${params.status || ""}&type=${params.type || ""}&priority=${params.priority || ""}`}
+              >
+                <Button variant="outline" size="sm">Next</Button>
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

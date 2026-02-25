@@ -4,49 +4,9 @@ import { prisma } from "@/lib/prisma";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { OrderTimeline } from "@/components/features/orders/order-timeline";
 import { CustomerOrderMessages } from "@/components/features/orders/customer-order-messages";
-
-async function getOrderForCustomer(orderId: string, customerId: string) {
-  const order = await prisma.order.findFirst({
-    where: {
-      id: orderId,
-      customerId,
-    },
-    include: {
-      currentStage: true,
-      stageHistory: {
-        include: { stage: true },
-        orderBy: { createdAt: "asc" },
-      },
-      files: {
-        include: { file: true },
-        orderBy: { createdAt: "desc" },
-      },
-      documents: {
-        where: { status: { in: ["SENT", "VIEWED", "SIGNED"] } },
-        include: { file: true },
-        orderBy: { createdAt: "desc" },
-      },
-      messages: {
-        where: { isInternal: false },
-        include: {
-          sender: { select: { id: true, firstName: true, lastName: true, avatar: true } },
-        },
-        orderBy: { createdAt: "desc" },
-      },
-    },
-  });
-
-  return order;
-}
-
-async function getStages() {
-  return prisma.orderStage.findMany({
-    where: { isActive: true },
-    orderBy: { sortOrder: "asc" },
-  });
-}
+import { getOrder } from "@/lib/order-process";
+import { OP_STAGE_MAP, OP_STATUS_ORDER } from "@/types/order-process";
 
 export default async function CustomerOrderDetailPage({
   params,
@@ -64,14 +24,56 @@ export default async function CustomerOrderDetailPage({
   }
 
   const { orderId } = await params;
-  const [order, stages] = await Promise.all([
-    getOrderForCustomer(orderId, session.user.id),
-    getStages(),
-  ]);
+
+  // Get order from Order Process
+  const order = await getOrder(orderId);
 
   if (!order) {
     notFound();
   }
+
+  // Verify this order belongs to the logged-in customer (by email)
+  if (
+    order.customerEmail.toLowerCase() !== session.user.email.toLowerCase()
+  ) {
+    notFound();
+  }
+
+  // Get BBD-specific data (documents, messages) from Prisma
+  const [documents, messages] = await Promise.all([
+    prisma.document
+      .findMany({
+        where: {
+          orderId,
+          status: { in: ["SENT", "VIEWED", "SIGNED"] },
+        },
+        include: { file: true },
+        orderBy: { createdAt: "desc" },
+      })
+      .catch(() => []),
+    prisma.message
+      .findMany({
+        where: { orderId, isInternal: false },
+        include: {
+          sender: {
+            select: { id: true, firstName: true, lastName: true, avatar: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      })
+      .catch(() => []),
+  ]);
+
+  // Build stage progress display
+  const statusIndex = OP_STATUS_ORDER.indexOf(order.status);
+  const stageSteps = OP_STATUS_ORDER.filter((s) => s !== "cancelled").map(
+    (status, i) => ({
+      name: OP_STAGE_MAP[status].name,
+      color: OP_STAGE_MAP[status].color,
+      completed: order.status !== "cancelled" && statusIndex >= i,
+      current: order.status === status,
+    })
+  );
 
   return (
     <div className="space-y-6">
@@ -83,31 +85,57 @@ export default async function CustomerOrderDetailPage({
           </p>
         </div>
         <Badge
-          variant={
-            order.status === "ACTIVE"
-              ? "info"
-              : order.status === "COMPLETED"
-                ? "success"
-                : order.status === "CANCELLED"
-                  ? "destructive"
-                  : "secondary"
-          }
+          variant="outline"
+          style={{
+            borderColor: order.currentStage.color,
+            color: order.currentStage.color,
+          }}
         >
-          {order.status}
+          {order.currentStage.name}
         </Badge>
       </div>
 
-      {/* Progress Timeline */}
+      {/* Progress */}
       <Card>
         <CardHeader>
           <CardTitle>Order Progress</CardTitle>
         </CardHeader>
         <CardContent>
-          <OrderTimeline
-            stages={stages}
-            currentStageId={order.currentStageId}
-            stageHistory={order.stageHistory}
-          />
+          <div className="flex items-center gap-2">
+            {stageSteps.map((step, i) => (
+              <div key={step.name} className="flex items-center gap-2 flex-1">
+                <div
+                  className={`flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold border-2 ${
+                    step.completed
+                      ? "text-white"
+                      : "text-muted-foreground border-muted"
+                  }`}
+                  style={
+                    step.completed
+                      ? { backgroundColor: step.color, borderColor: step.color }
+                      : undefined
+                  }
+                >
+                  {step.completed ? "✓" : i + 1}
+                </div>
+                <span
+                  className={`text-xs ${
+                    step.current ? "font-bold" : "text-muted-foreground"
+                  }`}
+                  style={step.current ? { color: step.color } : undefined}
+                >
+                  {step.name}
+                </span>
+                {i < stageSteps.length - 1 && (
+                  <div
+                    className={`flex-1 h-0.5 ${
+                      step.completed ? "bg-green-500" : "bg-muted"
+                    }`}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
 
@@ -123,23 +151,27 @@ export default async function CustomerOrderDetailPage({
               <span>{order.buildingType}</span>
               <span className="text-muted-foreground">Size:</span>
               <span>{order.buildingSize}</span>
-              {order.buildingColor && (
+              {order.manufacturer && (
                 <>
-                  <span className="text-muted-foreground">Color:</span>
-                  <span>{order.buildingColor}</span>
+                  <span className="text-muted-foreground">Manufacturer:</span>
+                  <span>{order.manufacturer}</span>
                 </>
               )}
               <span className="text-muted-foreground">Total Price:</span>
               <span className="font-medium">
-                {formatCurrency(order.totalPrice.toString())}
+                {formatCurrency(order.totalPrice)}
               </span>
               <span className="text-muted-foreground">Deposit:</span>
               <span>
-                {formatCurrency(order.depositAmount.toString())}
+                {formatCurrency(order.depositAmount)}
                 {order.depositCollected ? (
-                  <Badge variant="success" className="ml-2">Paid</Badge>
+                  <Badge variant="success" className="ml-2">
+                    Paid
+                  </Badge>
                 ) : (
-                  <Badge variant="warning" className="ml-2">Pending</Badge>
+                  <Badge variant="warning" className="ml-2">
+                    Pending
+                  </Badge>
                 )}
               </span>
               <span className="text-muted-foreground">Order Date:</span>
@@ -156,26 +188,21 @@ export default async function CustomerOrderDetailPage({
           <CardContent>
             <p>{order.deliveryAddress}</p>
             <p>
-              {order.deliveryCity}, {order.deliveryState} {order.deliveryZip}
+              {order.deliveryState} {order.deliveryZip}
             </p>
-            {order.deliveryNotes && (
-              <p className="mt-4 text-sm text-muted-foreground">
-                Notes: {order.deliveryNotes}
-              </p>
-            )}
           </CardContent>
         </Card>
       </div>
 
       {/* Documents */}
-      {order.documents.length > 0 && (
+      {documents.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Documents</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {order.documents.map((doc) => (
+              {documents.map((doc) => (
                 <div
                   key={doc.id}
                   className="flex items-center justify-between p-3 border rounded-lg"
@@ -206,27 +233,64 @@ export default async function CustomerOrderDetailPage({
         </Card>
       )}
 
-      {/* Files */}
-      {order.files.length > 0 && (
+      {/* Order Process Files */}
+      {(order.files.orderFormPdf ||
+        order.files.renderings.length > 0 ||
+        order.files.extraFiles.length > 0) && (
         <Card>
           <CardHeader>
             <CardTitle>Files</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {order.files.map(({ file }) => (
+              {order.files.orderFormPdf && (
+                <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div>
+                    <p className="font-medium">{order.files.orderFormPdf.name}</p>
+                    <p className="text-xs text-muted-foreground">Order Form</p>
+                  </div>
+                  <a
+                    href={order.files.orderFormPdf.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline"
+                  >
+                    Download
+                  </a>
+                </div>
+              )}
+              {order.files.renderings.map((file, i) => (
                 <div
-                  key={file.id}
+                  key={i}
                   className="flex items-center justify-between p-3 border rounded-lg"
                 >
                   <div>
-                    <p className="font-medium">{file.filename}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatDate(file.createdAt)}
-                    </p>
+                    <p className="font-medium">{file.name}</p>
+                    <p className="text-xs text-muted-foreground">Rendering</p>
                   </div>
                   <a
-                    href={`/api/files/${file.id}?download=true`}
+                    href={file.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline"
+                  >
+                    Download
+                  </a>
+                </div>
+              ))}
+              {order.files.extraFiles.map((file, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between p-3 border rounded-lg"
+                >
+                  <div>
+                    <p className="font-medium">{file.name}</p>
+                    <p className="text-xs text-muted-foreground">Extra File</p>
+                  </div>
+                  <a
+                    href={file.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="text-sm text-primary hover:underline"
                   >
                     Download
@@ -239,7 +303,7 @@ export default async function CustomerOrderDetailPage({
       )}
 
       {/* Messages */}
-      <CustomerOrderMessages orderId={order.id} messages={order.messages} />
+      <CustomerOrderMessages orderId={order.id} messages={messages} />
     </div>
   );
 }

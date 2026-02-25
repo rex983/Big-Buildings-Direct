@@ -183,6 +183,44 @@ async function updateUserStatus(formData: FormData) {
   revalidatePath("/team");
 }
 
+async function updateUserAssignment(formData: FormData) {
+  "use server";
+
+  const session = await auth();
+  if (!session) {
+    throw new Error("Unauthorized");
+  }
+
+  const currentUserRole = session.user.roleName;
+  if (currentUserRole !== "Admin" && currentUserRole !== "Manager") {
+    throw new Error("Unauthorized - Admin or Manager access required");
+  }
+
+  const userId = formData.get("userId") as string;
+  const office = (formData.get("office") as string) || null;
+  const department = (formData.get("department") as string) || null;
+
+  if (!userId) {
+    throw new Error("Missing required fields");
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+  });
+
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { office, department },
+  });
+
+  revalidatePath(`/team/${userId}`);
+  revalidatePath("/team");
+}
+
 async function deleteUser(formData: FormData) {
   "use server";
 
@@ -338,6 +376,14 @@ export default async function UserDetailPage({
 
                 <div className="grid gap-2 pt-4 border-t text-sm">
                   <div className="flex justify-between">
+                    <span className="text-muted-foreground">Office</span>
+                    <span>{user.office || "None"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Department</span>
+                    <span>{user.department || "None"}</span>
+                  </div>
+                  <div className="flex justify-between">
                     <span className="text-muted-foreground">Joined</span>
                     <span>{formatDate(user.createdAt)}</span>
                   </div>
@@ -376,6 +422,14 @@ export default async function UserDetailPage({
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Current Role</span>
                     <Badge variant="outline">{user.role.name}</Badge>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Office</span>
+                    <span>{user.office || "None"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Department</span>
+                    <span>{user.department || "None"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Total Orders</span>
@@ -425,6 +479,55 @@ export default async function UserDetailPage({
 
                 <Button type="submit" className="w-full">
                   Update Role
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Office & Department Card - Admin or Manager */}
+        {(isAdmin || isManager) && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Office & Department</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form action={updateUserAssignment} className="space-y-4">
+                <input type="hidden" name="userId" value={user.id} />
+
+                <div className="space-y-2">
+                  <Label htmlFor="office">Office Location</Label>
+                  <select
+                    id="office"
+                    name="office"
+                    defaultValue={user.office || ""}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">No office assigned</option>
+                    <option value="Marion Office">Marion Office</option>
+                    <option value="Harbor Office">Harbor Office</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="department">Department</Label>
+                  <select
+                    id="department"
+                    name="department"
+                    defaultValue={user.department || ""}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">No department assigned</option>
+                    <option value="Sales">Sales</option>
+                    <option value="Operations">Operations</option>
+                    <option value="BST">BST</option>
+                    <option value="R&D">R&D</option>
+                    <option value="Management">Management</option>
+                  </select>
+                </div>
+
+                <Button type="submit" className="w-full">
+                  Update Assignment
                 </Button>
               </form>
             </CardContent>

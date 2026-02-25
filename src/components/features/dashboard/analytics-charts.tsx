@@ -9,7 +9,7 @@ import {
   Tooltip,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { DrilldownDialog } from "./drilldown-dialog";
 
 // Colors for pie charts
 const COLORS = [
@@ -58,6 +58,7 @@ interface DateRange {
 interface AnalyticsChartsProps {
   title: string;
   apiEndpoint: string;
+  year: number;
 }
 
 function formatCurrency(value: number): string {
@@ -149,76 +150,32 @@ function useSortedData<T extends { quantity: number; totalAmount: number }>(
   return { sortedData, sort, handleSort };
 }
 
-// Helper to format date for input
-function formatDateForInput(date: Date): string {
-  return date.toISOString().split("T")[0];
-}
 
-// Get preset date ranges
-function getPresetRange(preset: string): DateRange {
-  const now = new Date();
-
-  switch (preset) {
-    case "thisMonth": {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1);
-      return { startDate: formatDateForInput(start), endDate: formatDateForInput(now) };
-    }
-    case "lastMonth": {
-      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const end = new Date(now.getFullYear(), now.getMonth(), 0);
-      return { startDate: formatDateForInput(start), endDate: formatDateForInput(end) };
-    }
-    case "thisQuarter": {
-      const quarter = Math.floor(now.getMonth() / 3);
-      const start = new Date(now.getFullYear(), quarter * 3, 1);
-      return { startDate: formatDateForInput(start), endDate: formatDateForInput(now) };
-    }
-    case "thisYear": {
-      const start = new Date(now.getFullYear(), 0, 1);
-      return { startDate: formatDateForInput(start), endDate: formatDateForInput(now) };
-    }
-    case "lastYear": {
-      const start = new Date(now.getFullYear() - 1, 0, 1);
-      const end = new Date(now.getFullYear() - 1, 11, 31);
-      return { startDate: formatDateForInput(start), endDate: formatDateForInput(end) };
-    }
-    case "allTime":
-    default:
-      return { startDate: "", endDate: "" };
-  }
-}
-
-// Debounce hook for delayed API calls
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = React.useState<T>(value);
-
-  React.useEffect(() => {
-    const timer = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(timer);
-  }, [value, delay]);
-
-  return debouncedValue;
-}
-
-export function AnalyticsCharts({ title, apiEndpoint }: AnalyticsChartsProps) {
+export function AnalyticsCharts({ title, apiEndpoint, year }: AnalyticsChartsProps) {
   const [data, setData] = React.useState<AnalyticsData | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [dateRange, setDateRange] = React.useState<DateRange>({ startDate: "", endDate: "" });
-  const [activePreset, setActivePreset] = React.useState<string>("allTime");
+  const [drilldown, setDrilldown] = React.useState<{
+    open: boolean;
+    type: "salesRep" | "state" | "manufacturer";
+    value: string;
+  }>({ open: false, type: "salesRep", value: "" });
 
-  // Debounce date range to prevent rapid API calls
-  const debouncedDateRange = useDebounce(dateRange, 300);
+  // Derive date range from the year prop
+  const dateRange = React.useMemo<DateRange>(() => ({
+    startDate: `${year}-01-01`,
+    endDate: `${year}-12-31`,
+  }), [year]);
 
   const fetchAnalytics = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
-      if (debouncedDateRange.startDate) params.set("startDate", debouncedDateRange.startDate);
-      if (debouncedDateRange.endDate) params.set("endDate", debouncedDateRange.endDate);
+      params.set("startDate", dateRange.startDate);
+      params.set("endDate", dateRange.endDate);
 
-      const url = `${apiEndpoint}${params.toString() ? `?${params.toString()}` : ""}`;
+      const url = `${apiEndpoint}?${params.toString()}`;
       const response = await fetch(url);
       const result = await response.json();
       if (result.success) {
@@ -231,21 +188,11 @@ export function AnalyticsCharts({ title, apiEndpoint }: AnalyticsChartsProps) {
     } finally {
       setLoading(false);
     }
-  }, [debouncedDateRange, apiEndpoint]);
+  }, [dateRange, apiEndpoint]);
 
   React.useEffect(() => {
     fetchAnalytics();
   }, [fetchAnalytics]);
-
-  const handlePresetChange = (preset: string) => {
-    setActivePreset(preset);
-    setDateRange(getPresetRange(preset));
-  };
-
-  const handleDateChange = (field: "startDate" | "endDate", value: string) => {
-    setActivePreset("custom");
-    setDateRange((prev) => ({ ...prev, [field]: value }));
-  };
 
   const {
     sortedData: sortedSalesRep,
@@ -316,61 +263,7 @@ export function AnalyticsCharts({ title, apiEndpoint }: AnalyticsChartsProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h2 className="text-xl font-semibold">{title}</h2>
-
-        {/* Date Range Controls */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Preset Buttons */}
-          <div className="flex flex-wrap gap-1">
-            {[
-              { key: "allTime", label: "All Time" },
-              { key: "thisMonth", label: "This Month" },
-              { key: "lastMonth", label: "Last Month" },
-              { key: "thisQuarter", label: "This Quarter" },
-              { key: "thisYear", label: "This Year" },
-              { key: "lastYear", label: "Last Year" },
-            ].map((preset) => (
-              <Button
-                key={preset.key}
-                variant={activePreset === preset.key ? "default" : "outline"}
-                size="sm"
-                onClick={() => handlePresetChange(preset.key)}
-                className="text-xs h-8"
-              >
-                {preset.label}
-              </Button>
-            ))}
-          </div>
-
-          {/* Custom Date Inputs */}
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={dateRange.startDate}
-              onChange={(e) => handleDateChange("startDate", e.target.value)}
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="Start date"
-            />
-            <span className="text-muted-foreground text-sm">to</span>
-            <input
-              type="date"
-              value={dateRange.endDate}
-              onChange={(e) => handleDateChange("endDate", e.target.value)}
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-              placeholder="End date"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Date Range Display */}
-      {(dateRange.startDate || dateRange.endDate) && (
-        <p className="text-sm text-muted-foreground">
-          Showing data {dateRange.startDate ? `from ${new Date(dateRange.startDate).toLocaleDateString()}` : ""}
-          {dateRange.endDate ? ` to ${new Date(dateRange.endDate).toLocaleDateString()}` : ""}
-        </p>
-      )}
+      <h2 className="text-xl font-semibold">{title} ({year})</h2>
 
       {/* Tables */}
       <div className="grid gap-6 lg:grid-cols-3">
@@ -417,7 +310,14 @@ export function AnalyticsCharts({ title, apiEndpoint }: AnalyticsChartsProps) {
                     <>
                       {sortedSalesRep.map((item, index) => (
                         <tr key={index} className="border-b hover:bg-muted/50">
-                          <td className="px-4 py-2">{item.name}</td>
+                          <td className="px-4 py-2">
+                            <button
+                              className="text-left hover:text-primary hover:underline cursor-pointer"
+                              onClick={() => setDrilldown({ open: true, type: "salesRep", value: item.name })}
+                            >
+                              {item.name}
+                            </button>
+                          </td>
                           <td className="px-4 py-2 text-right tabular-nums">{formatNumber(item.quantity)}</td>
                           <td className="px-4 py-2 text-right tabular-nums">{formatCurrency(item.totalAmount)}</td>
                         </tr>
@@ -478,7 +378,14 @@ export function AnalyticsCharts({ title, apiEndpoint }: AnalyticsChartsProps) {
                     <>
                       {sortedState.map((item, index) => (
                         <tr key={index} className="border-b hover:bg-muted/50">
-                          <td className="px-4 py-2">{item.state}</td>
+                          <td className="px-4 py-2">
+                            <button
+                              className="text-left hover:text-primary hover:underline cursor-pointer"
+                              onClick={() => setDrilldown({ open: true, type: "state", value: item.state })}
+                            >
+                              {item.state}
+                            </button>
+                          </td>
                           <td className="px-4 py-2 text-right tabular-nums">{formatNumber(item.quantity)}</td>
                           <td className="px-4 py-2 text-right tabular-nums">{formatCurrency(item.totalAmount)}</td>
                         </tr>
@@ -539,7 +446,14 @@ export function AnalyticsCharts({ title, apiEndpoint }: AnalyticsChartsProps) {
                     <>
                       {sortedManufacturer.map((item, index) => (
                         <tr key={index} className="border-b hover:bg-muted/50">
-                          <td className="px-4 py-2">{item.manufacturer}</td>
+                          <td className="px-4 py-2">
+                            <button
+                              className="text-left hover:text-primary hover:underline cursor-pointer"
+                              onClick={() => setDrilldown({ open: true, type: "manufacturer", value: item.manufacturer })}
+                            >
+                              {item.manufacturer}
+                            </button>
+                          </td>
                           <td className="px-4 py-2 text-right tabular-nums">{formatNumber(item.quantity)}</td>
                           <td className="px-4 py-2 text-right tabular-nums">{formatCurrency(item.totalAmount)}</td>
                         </tr>
@@ -692,6 +606,15 @@ export function AnalyticsCharts({ title, apiEndpoint }: AnalyticsChartsProps) {
           </CardContent>
         </Card>
       </div>
+
+      <DrilldownDialog
+        open={drilldown.open}
+        onOpenChange={(open) => setDrilldown((prev) => ({ ...prev, open }))}
+        filterType={drilldown.type}
+        filterValue={drilldown.value}
+        startDate={dateRange.startDate}
+        endDate={dateRange.endDate}
+      />
     </div>
   );
 }

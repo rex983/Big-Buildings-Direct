@@ -12,6 +12,7 @@ interface NavItem {
   icon: React.ReactNode;
   permission?: string;
   roles?: string[];
+  children?: NavItem[];
 }
 
 const navigation: NavItem[] = [
@@ -43,6 +44,38 @@ const navigation: NavItem[] = [
       </svg>
     ),
     permission: "orders.view",
+    children: [
+      {
+        name: "Order Changes",
+        href: "/orders/order-changes",
+        icon: (
+          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+            />
+          </svg>
+        ),
+        roles: ["Admin", "Manager", "BST", "Customer"],
+      },
+      {
+        name: "AI Agent",
+        href: "/orders/ai-agent",
+        icon: (
+          <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
+            />
+          </svg>
+        ),
+        roles: ["Admin", "Manager"],
+      },
+    ],
   },
   {
     name: "Success Team",
@@ -73,21 +106,6 @@ const navigation: NavItem[] = [
       </svg>
     ),
     roles: ["Customer"],
-  },
-  {
-    name: "Order Changes",
-    href: "/order-changes",
-    icon: (
-      <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-        />
-      </svg>
-    ),
-    roles: ["Admin", "Manager", "BST", "Customer"],
   },
   {
     name: "Map",
@@ -139,6 +157,36 @@ const navigation: NavItem[] = [
       </svg>
     ),
     permission: "messages.view",
+  },
+  {
+    name: "Pay",
+    href: "/pay",
+    icon: (
+      <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+        />
+      </svg>
+    ),
+    roles: ["Admin", "Manager"],
+  },
+  {
+    name: "Deposit Status",
+    href: "/deposit-status",
+    icon: (
+      <svg className="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+        />
+      </svg>
+    ),
+    roles: ["Admin", "Manager"],
   },
   {
     name: "Team",
@@ -213,15 +261,26 @@ export function Sidebar() {
     localStorage.setItem("sidebar-collapsed", String(collapsed));
   }, [collapsed]);
 
-  const filteredNavigation = navigation.filter((item) => {
-    // Check role-based access first
-    if (item.roles) {
-      return item.roles.includes(roleName);
-    }
-    // Then check permission-based access
+  const canView = (item: NavItem) => {
+    if (item.roles) return item.roles.includes(roleName);
     if (!item.permission) return true;
     return isAdmin || hasPermission(item.permission);
-  });
+  };
+
+  const filteredNavigation = navigation.filter(canView);
+
+  const isItemActive = (item: NavItem): boolean => {
+    if (pathname === item.href) return true;
+    if (item.href === "/orders" && pathname === "/orders") return true;
+    if (item.href !== "/orders" && pathname.startsWith(`${item.href}/`)) return true;
+    if (item.href === "/success-team" && pathname.startsWith("/tickets")) return true;
+    if (item.href === "/success-team" && roleName !== "Customer" && pathname.startsWith("/revisions")) return true;
+    return false;
+  };
+
+  const isChildActive = (item: NavItem): boolean => {
+    return item.children?.some((child) => pathname === child.href || pathname.startsWith(`${child.href}/`)) ?? false;
+  };
 
   return (
     <div
@@ -249,23 +308,49 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-2 py-4">
         {filteredNavigation.map((item) => {
-          const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`) || (item.href === "/success-team" && pathname.startsWith("/tickets")) || (item.href === "/success-team" && roleName !== "Customer" && pathname.startsWith("/revisions"));
+          const isActive = isItemActive(item);
+          const hasActiveChild = isChildActive(item);
+          const filteredChildren = item.children?.filter(canView);
+
           return (
-            <Link
-              key={item.name}
-              href={item.href}
-              title={collapsed ? item.name : undefined}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                collapsed && "justify-center px-2",
-                isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            <div key={item.name}>
+              <Link
+                href={item.href}
+                title={collapsed ? item.name : undefined}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  collapsed && "justify-center px-2",
+                  isActive || hasActiveChild
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                )}
+              >
+                {item.icon}
+                {!collapsed && <span className="whitespace-nowrap">{item.name}</span>}
+              </Link>
+              {!collapsed && filteredChildren && filteredChildren.length > 0 && (isActive || hasActiveChild) && (
+                <div className="ml-4 mt-1 space-y-1 border-l border-border pl-3">
+                  {filteredChildren.map((child) => {
+                    const isChildItemActive = pathname === child.href || pathname.startsWith(`${child.href}/`);
+                    return (
+                      <Link
+                        key={child.name}
+                        href={child.href}
+                        className={cn(
+                          "flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors",
+                          isChildItemActive
+                            ? "font-medium text-primary"
+                            : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                        )}
+                      >
+                        {child.icon}
+                        <span className="whitespace-nowrap">{child.name}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
               )}
-            >
-              {item.icon}
-              {!collapsed && <span className="whitespace-nowrap">{item.name}</span>}
-            </Link>
+            </div>
           );
         })}
       </nav>

@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
+import { TestModeBanner } from "@/components/layout/test-mode-banner";
+import { RealtimeOrdersRefresh } from "@/components/features/orders/realtime-orders-refresh";
 
 export default async function DashboardLayout({
   children,
@@ -22,6 +24,8 @@ export default async function DashboardLayout({
 
   return (
     <>
+      <RealtimeOrdersRefresh />
+      <TestModeBanner />
       <ImpersonationBanner />
       <div className="flex h-screen">
         <Sidebar />

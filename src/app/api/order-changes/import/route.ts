@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { requirePermission } from "@/lib/auth";
 
 interface CsvRow {
@@ -150,12 +151,32 @@ export async function POST(request: NextRequest) {
       userMap.set(u.firstName.toLowerCase(), u.id);
     });
 
+    // Batch-load existing order changes for duplicate detection
+    const orderIds = [...new Set([...orderMap.values()])];
+    const existingChanges = orderIds.length > 0
+      ? await prisma.orderChange.findMany({
+          where: { orderId: { in: orderIds } },
+          select: { orderId: true, changeDate: true, additionalNotes: true },
+        })
+      : [];
+
+    // Build a Set of "orderId|changeDate|notes" keys for O(1) duplicate lookup
+    const existingKeys = new Set(
+      existingChanges.map(
+        (c) => `${c.orderId}|${c.changeDate.toISOString()}|${c.additionalNotes ?? ""}`
+      )
+    );
+
     const results = {
       total: rows.length,
       imported: 0,
       skipped: 0,
       errors: [] as { row: number; orderNumber: string; error: string }[],
     };
+
+    // Prepare all valid creates, then batch them
+    const toCreate: Prisma.OrderChangeCreateManyInput[] = [];
+    const rowMeta: { row: number; orderNumber: string }[] = [];
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -169,7 +190,7 @@ export async function POST(request: NextRequest) {
       const orderId = orderMap.get(orderNumber);
       if (!orderId) {
         results.errors.push({
-          row: i + 2, // +2 for header row and 0-index
+          row: i + 2,
           orderNumber,
           error: `Order #${orderNumber} not found`,
         });
@@ -177,11 +198,9 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Find sales rep
       const salesRepName = row["Sales rep"]?.toLowerCase();
       const salesRepId = salesRepName ? userMap.get(salesRepName) : null;
 
-      // Parse change date
       const changeDate = parseDate(row["Date of Change"]);
       if (!changeDate) {
         results.errors.push({
@@ -193,56 +212,67 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      try {
-        // Check for duplicate (same order, same date, same notes)
-        const existingChange = await prisma.orderChange.findFirst({
-          where: {
-            orderId,
-            changeDate,
-            additionalNotes: row["Additional Notes"] || null,
-          },
-        });
-
-        if (existingChange) {
-          results.skipped++;
-          continue;
-        }
-
-        await prisma.orderChange.create({
-          data: {
-            orderId,
-            changeDate,
-            salesRepId,
-            orderFormName: row["Order Form Name"] || null,
-            manufacturer: row["Manufacturer"] || null,
-            oldOrderTotal: parseCurrency(row["Old Order Total"]),
-            newOrderTotal: parseCurrency(row["New Order Total"]),
-            oldDepositTotal: parseCurrency(row["Old Deposit Total"]),
-            newDepositTotal: parseCurrency(row["New Deposit Total"]),
-            orderTotalDiff: parseCurrency(row["Order Total Difference"]),
-            depositDiff: parseCurrency(row["Deposit difference"]),
-            additionalNotes: row["Additional Notes"] || null,
-            uploadsUrl: row["Uploads"] || null,
-            changeType: row["Change Type"] || null,
-            depositCharged: row["Deposit Charged"] || null,
-            sabrinaProcess: parseBoolean(row["Sabrina Process"]),
-            updatedInNewSale: parseBoolean(row["Updated numbers in New Sale"]),
-            rexProcess: row["Rex Process"] || null,
-            customerEmail: row["Cust Email"]?.trim() || null,
-            newSalesRef: row["New Sales"] || null,
-            revisionsRef: row["Revisions"] || null,
-            cancellationsRef: row["Cancellations"] || null,
-          },
-        });
-
-        results.imported++;
-      } catch (error) {
-        results.errors.push({
-          row: i + 2,
-          orderNumber,
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
+      // Check duplicate using in-memory Set
+      const notes = row["Additional Notes"] || null;
+      const key = `${orderId}|${changeDate.toISOString()}|${notes ?? ""}`;
+      if (existingKeys.has(key)) {
         results.skipped++;
+        continue;
+      }
+
+      // Mark as seen to prevent duplicates within the same import
+      existingKeys.add(key);
+
+      toCreate.push({
+        orderId,
+        changeDate,
+        salesRepId,
+        orderFormName: row["Order Form Name"] || null,
+        manufacturer: row["Manufacturer"] || null,
+        oldOrderTotal: parseCurrency(row["Old Order Total"]),
+        newOrderTotal: parseCurrency(row["New Order Total"]),
+        oldDepositTotal: parseCurrency(row["Old Deposit Total"]),
+        newDepositTotal: parseCurrency(row["New Deposit Total"]),
+        orderTotalDiff: parseCurrency(row["Order Total Difference"]),
+        depositDiff: parseCurrency(row["Deposit difference"]),
+        additionalNotes: notes,
+        uploadsUrl: row["Uploads"] || null,
+        changeType: row["Change Type"] || null,
+        depositCharged: row["Deposit Charged"] || null,
+        sabrinaProcess: parseBoolean(row["Sabrina Process"]),
+        updatedInNewSale: parseBoolean(row["Updated numbers in New Sale"]),
+        rexProcess: row["Rex Process"] || null,
+        customerEmail: row["Cust Email"]?.trim() || null,
+        newSalesRef: row["New Sales"] || null,
+        revisionsRef: row["Revisions"] || null,
+        cancellationsRef: row["Cancellations"] || null,
+      });
+      rowMeta.push({ row: i + 2, orderNumber });
+    }
+
+    // Batch create in chunks of 50 to avoid SQLite variable limits
+    const chunkSize = 50;
+    for (let i = 0; i < toCreate.length; i += chunkSize) {
+      const chunk = toCreate.slice(i, i + chunkSize);
+      try {
+        await prisma.orderChange.createMany({ data: chunk });
+        results.imported += chunk.length;
+      } catch (error) {
+        // If batch fails, fall back to individual creates for this chunk
+        for (let j = 0; j < chunk.length; j++) {
+          try {
+            await prisma.orderChange.create({ data: chunk[j] });
+            results.imported++;
+          } catch (innerError) {
+            const meta = rowMeta[i + j];
+            results.errors.push({
+              row: meta.row,
+              orderNumber: meta.orderNumber,
+              error: innerError instanceof Error ? innerError.message : "Unknown error",
+            });
+            results.skipped++;
+          }
+        }
       }
     }
 

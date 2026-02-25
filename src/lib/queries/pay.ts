@@ -53,7 +53,8 @@ export async function getOrderStatsForMonth(month: number, year: number) {
   const startDate = new Date(year, month - 1, 1);
   const endDate = new Date(year, month, 1);
 
-  const orders = await prisma.order.findMany({
+  const grouped = await prisma.order.groupBy({
+    by: ["salesRepId"],
     where: {
       status: { not: "CANCELLED" },
       salesRepId: { not: null },
@@ -67,23 +68,18 @@ export async function getOrderStatsForMonth(month: number, year: number) {
         },
       ],
     },
-    select: {
-      salesRepId: true,
-      totalPrice: true,
-    },
+    _count: { id: true },
+    _sum: { totalPrice: true },
   });
 
   const statsMap = new Map<string, { buildingsSold: number; totalOrderAmount: Prisma.Decimal }>();
 
-  for (const order of orders) {
-    if (!order.salesRepId) continue;
-    const existing = statsMap.get(order.salesRepId) ?? {
-      buildingsSold: 0,
-      totalOrderAmount: new Prisma.Decimal(0),
-    };
-    existing.buildingsSold += 1;
-    existing.totalOrderAmount = existing.totalOrderAmount.add(order.totalPrice);
-    statsMap.set(order.salesRepId, existing);
+  for (const group of grouped) {
+    if (!group.salesRepId) continue;
+    statsMap.set(group.salesRepId, {
+      buildingsSold: group._count.id,
+      totalOrderAmount: group._sum.totalPrice ?? new Prisma.Decimal(0),
+    });
   }
 
   return statsMap;
@@ -94,7 +90,7 @@ export async function getOrderStatsForMonth(month: number, year: number) {
  */
 export async function getLedgerForMonth(month: number, year: number) {
   const ledgerEntries = await prisma.payLedger.findMany({
-    where: { month, year },
+    where: { month, year, salesRep: { isActive: true } },
     include: {
       salesRep: {
         select: {
@@ -102,6 +98,7 @@ export async function getLedgerForMonth(month: number, year: number) {
           firstName: true,
           lastName: true,
           email: true,
+          office: true,
         },
       },
       reviewedBy: {
@@ -134,8 +131,78 @@ export async function getLedgerForMonth(month: number, year: number) {
 }
 
 /**
+ * Find the matching tier for a given value from a list of tiers.
+ * Returns the tier whose min/max range contains the value, or null.
+ */
+interface TierData {
+  type: string;
+  minValue: Prisma.Decimal;
+  maxValue: Prisma.Decimal | null;
+  bonusAmount: Prisma.Decimal;
+  bonusType: string;
+}
+
+export function findMatchingTier(value: number | Prisma.Decimal, tiers: TierData[]): TierData | null {
+  const numValue = typeof value === "number" ? value : value.toNumber();
+  for (const tier of tiers) {
+    const min = tier.minValue.toNumber();
+    const max = tier.maxValue?.toNumber() ?? Infinity;
+    if (numValue >= min && numValue <= max) {
+      return tier;
+    }
+  }
+  return null;
+}
+
+/**
+ * Calculate the payroll formula for a single rep:
+ * (Qty * tiered bonus amount) + (Salary/12) + (order total * tiered%) = planTotal
+ */
+export function calculateFormulaForRep(
+  buildingsSold: number,
+  totalOrderAmount: Prisma.Decimal,
+  salary: Prisma.Decimal,
+  tiers: TierData[]
+) {
+  const buildingSoldTiers = tiers.filter((t) => t.type === "BUILDINGS_SOLD");
+  const orderTotalTiers = tiers.filter((t) => t.type === "ORDER_TOTAL");
+
+  // Tier bonus: match buildingsSold to BUILDINGS_SOLD tier
+  let tierBonusAmount = new Prisma.Decimal(0);
+  const buildingTier = findMatchingTier(buildingsSold, buildingSoldTiers);
+  if (buildingTier) {
+    tierBonusAmount = new Prisma.Decimal(buildingsSold).mul(buildingTier.bonusAmount);
+  }
+
+  // Monthly salary: salary / 12
+  const monthlySalary = salary.toNumber() > 0
+    ? new Prisma.Decimal(salary.toNumber() / 12).toDecimalPlaces(2)
+    : new Prisma.Decimal(0);
+
+  // Commission: match totalOrderAmount to ORDER_TOTAL tier, then totalOrderAmount * (bonusAmount/100)
+  let commissionAmount = new Prisma.Decimal(0);
+  const orderTier = findMatchingTier(totalOrderAmount, orderTotalTiers);
+  if (orderTier) {
+    if (orderTier.bonusType === "PERCENTAGE") {
+      commissionAmount = totalOrderAmount
+        .mul(orderTier.bonusAmount)
+        .div(100)
+        .toDecimalPlaces(2);
+    } else {
+      commissionAmount = orderTier.bonusAmount;
+    }
+  }
+
+  const planTotal = tierBonusAmount.add(monthlySalary).add(commissionAmount);
+
+  return { tierBonusAmount, monthlySalary, commissionAmount, planTotal };
+}
+
+/**
  * Generate/refresh ledger entries for all sales reps for a given month/year.
- * Preserves existing adjustments and approved status.
+ * Uses the payroll formula: (Qty * tiered bonus) + (Salary/12) + (order total * tiered%) = planTotal
+ * finalAmount = planTotal - cancellationDeduction + adjustment
+ * Preserves existing adjustments, cancellation deductions, and approved status.
  */
 export async function generateLedger(month: number, year: number, reviewerId: string) {
   const salesReps = await prisma.user.findMany({
@@ -143,7 +210,7 @@ export async function generateLedger(month: number, year: number, reviewerId: st
       role: { name: "Sales Rep" },
       isActive: true,
     },
-    select: { id: true },
+    select: { id: true, office: true },
   });
 
   const orderStats = await getOrderStatsForMonth(month, year);
@@ -157,42 +224,53 @@ export async function generateLedger(month: number, year: number, reviewerId: st
 
   const planMap = new Map(payPlans.map((p) => [p.salesRepId, p]));
 
-  const results = [];
+  // Fetch office pay plan tiers
+  const officePlans = await getOfficePayPlans(month, year);
 
-  for (const rep of salesReps) {
+  // Batch-fetch all existing ledger entries for this month in one query
+  const existingEntries = await prisma.payLedger.findMany({
+    where: { month, year },
+  });
+  const existingMap = new Map(existingEntries.map((e) => [e.salesRepId, e]));
+
+  // Build all upserts and run them in parallel
+  const upsertPromises = salesReps.map((rep) => {
     const stats = orderStats.get(rep.id) ?? {
       buildingsSold: 0,
       totalOrderAmount: new Prisma.Decimal(0),
     };
 
     const plan = planMap.get(rep.id);
-    const planTotal = plan
-      ? plan.lineItems.reduce((sum, item) => sum.add(item.amount), new Prisma.Decimal(0))
-      : new Prisma.Decimal(0);
+    const salary = plan?.salary ?? new Prisma.Decimal(0);
 
-    // Check if entry already exists
-    const existing = await prisma.payLedger.findUnique({
-      where: {
-        month_year_salesRepId: { month, year, salesRepId: rep.id },
-      },
-    });
+    const officePlan = rep.office ? officePlans[rep.office] : null;
+    const tiers: TierData[] = officePlan?.tiers ?? [];
 
+    const formula = calculateFormulaForRep(
+      stats.buildingsSold,
+      stats.totalOrderAmount,
+      salary,
+      tiers
+    );
+
+    const existing = existingMap.get(rep.id);
     const adjustment = existing?.adjustment ?? new Prisma.Decimal(0);
-    const finalAmount = planTotal.add(adjustment);
-
-    // Preserve approved status - don't overwrite if already approved
+    const cancellationDeduction = existing?.cancellationDeduction ?? new Prisma.Decimal(0);
+    const finalAmount = formula.planTotal.sub(cancellationDeduction).add(adjustment);
     const status = existing?.status === "APPROVED" ? "APPROVED" : existing?.status ?? "PENDING";
 
-    const ledgerEntry = await prisma.payLedger.upsert({
+    return prisma.payLedger.upsert({
       where: {
         month_year_salesRepId: { month, year, salesRepId: rep.id },
       },
       update: {
         buildingsSold: stats.buildingsSold,
         totalOrderAmount: stats.totalOrderAmount,
-        planTotal,
+        tierBonusAmount: formula.tierBonusAmount,
+        monthlySalary: formula.monthlySalary,
+        commissionAmount: formula.commissionAmount,
+        planTotal: formula.planTotal,
         finalAmount,
-        // Preserve adjustment, adjustmentNote, notes, status, reviewedById, reviewedAt
       },
       create: {
         month,
@@ -200,17 +278,61 @@ export async function generateLedger(month: number, year: number, reviewerId: st
         salesRepId: rep.id,
         buildingsSold: stats.buildingsSold,
         totalOrderAmount: stats.totalOrderAmount,
-        planTotal,
+        tierBonusAmount: formula.tierBonusAmount,
+        monthlySalary: formula.monthlySalary,
+        commissionAmount: formula.commissionAmount,
+        planTotal: formula.planTotal,
         adjustment,
+        cancellationDeduction,
         finalAmount,
         status,
       },
     });
+  });
 
-    results.push(ledgerEntry);
+  return Promise.all(upsertPromises);
+}
+
+/**
+ * Get cancelled orders for a given month, optionally filtered by sales rep.
+ * Filters by cancelledAt within the month range.
+ */
+export async function getCancelledOrdersForMonth(
+  month: number,
+  year: number,
+  salesRepId?: string
+) {
+  const startDate = new Date(year, month - 1, 1);
+  const endDate = new Date(year, month, 1);
+
+  const where: Prisma.OrderWhereInput = {
+    status: "CANCELLED",
+    cancelledAt: { gte: startDate, lt: endDate },
+  };
+
+  if (salesRepId) {
+    where.salesRepId = salesRepId;
   }
 
-  return results;
+  return prisma.order.findMany({
+    where,
+    select: {
+      id: true,
+      orderNumber: true,
+      customerName: true,
+      totalPrice: true,
+      cancelledAt: true,
+      cancelReason: true,
+      salesRep: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+        },
+      },
+    },
+    orderBy: { cancelledAt: "desc" },
+  });
 }
 
 /**

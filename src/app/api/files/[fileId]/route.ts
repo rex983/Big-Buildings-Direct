@@ -77,29 +77,29 @@ export async function DELETE(
     const storage = getStorage();
     await storage.delete(file.storagePath);
 
-    // Log activities for linked orders
-    for (const orderFile of file.orderFiles) {
-      await prisma.orderActivity.create({
-        data: {
-          orderId: orderFile.orderId,
-          type: "FILE_DELETED",
-          description: `File "${file.filename}" was deleted`,
-          userId: user.id,
-        },
-      });
-    }
+    // Batch-create activity logs for linked orders and tickets
+    const orderActivities = file.orderFiles.map((of) => ({
+      orderId: of.orderId,
+      type: "FILE_DELETED",
+      description: `File "${file.filename}" was deleted`,
+      userId: user.id,
+    }));
 
-    // Log activities for linked tickets
-    for (const ticketFile of file.ticketFiles) {
-      await prisma.ticketActivity.create({
-        data: {
-          ticketId: ticketFile.ticketId,
-          action: "FILE_REMOVED",
-          description: `File "${file.filename}" was removed`,
-          userId: user.id,
-        },
-      });
-    }
+    const ticketActivities = file.ticketFiles.map((tf) => ({
+      ticketId: tf.ticketId,
+      action: "FILE_REMOVED",
+      description: `File "${file.filename}" was removed`,
+      userId: user.id,
+    }));
+
+    await Promise.all([
+      orderActivities.length > 0
+        ? prisma.orderActivity.createMany({ data: orderActivities })
+        : Promise.resolve(),
+      ticketActivities.length > 0
+        ? prisma.ticketActivity.createMany({ data: ticketActivities })
+        : Promise.resolve(),
+    ]);
 
     // Delete file record (cascade will handle orderFiles, ticketFiles, revisionFiles)
     await prisma.file.delete({

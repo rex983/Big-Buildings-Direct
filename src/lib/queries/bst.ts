@@ -167,33 +167,41 @@ export async function getManufacturerOrders(params: PipelineSearchParams) {
 }
 
 export async function getBstStageCounts(): Promise<BstStageCounts> {
-  const baseWhere = {
-    sentToManufacturer: true,
-    status: { not: "CANCELLED" },
+  // Use two groupBy queries instead of 5 separate count queries
+  const [wcGroups, lppGroups] = await Promise.all([
+    prisma.order.groupBy({
+      by: ["wcStatus"],
+      where: {
+        sentToManufacturer: true,
+        status: { not: "CANCELLED" },
+      },
+      _count: { id: true },
+    }),
+    // For Contact Made orders, also group by lppStatus
+    prisma.order.groupBy({
+      by: ["lppStatus"],
+      where: {
+        sentToManufacturer: true,
+        status: { not: "CANCELLED" },
+        wcStatus: "Contact Made",
+      },
+      _count: { id: true },
+    }),
+  ]);
+
+  const wcMap = new Map(wcGroups.map((g) => [g.wcStatus, g._count.id]));
+  const lppMap = new Map(lppGroups.map((g) => [g.lppStatus, g._count.id]));
+
+  const readyToInstall = lppMap.get("Ready for Install") ?? 0;
+  const contactMadeTotal = wcMap.get("Contact Made") ?? 0;
+
+  return {
+    stmPending: wcMap.get(null as unknown as string) ?? 0,
+    wcPending: wcMap.get("Pending") ?? 0,
+    noContactMade: wcMap.get("No Contact Made") ?? 0,
+    wcDoneLpp: contactMadeTotal - readyToInstall,
+    readyToInstall,
   };
-
-  const [stmPending, wcPending, noContactMade, wcDoneLpp, readyToInstall] =
-    await Promise.all([
-      prisma.order.count({ where: { ...baseWhere, wcStatus: null } }),
-      prisma.order.count({ where: { ...baseWhere, wcStatus: "Pending" } }),
-      prisma.order.count({ where: { ...baseWhere, wcStatus: "No Contact Made" } }),
-      prisma.order.count({
-        where: {
-          ...baseWhere,
-          wcStatus: "Contact Made",
-          OR: [{ lppStatus: null }, { lppStatus: "Pending" }],
-        },
-      }),
-      prisma.order.count({
-        where: {
-          ...baseWhere,
-          wcStatus: "Contact Made",
-          lppStatus: "Ready for Install",
-        },
-      }),
-    ]);
-
-  return { stmPending, wcPending, noContactMade, wcDoneLpp, readyToInstall };
 }
 
 export async function getWcStageOrders() {
@@ -286,51 +294,82 @@ export async function getTickets(params: TicketSearchParams, userId: string) {
     ];
   }
 
-  // Fetch all matching tickets so we can sort by status then priority in JS
-  // (Prisma/SQLite can't custom-order string enum fields)
-  const [allTickets, total] = await Promise.all([
-    prisma.ticket.findMany({
-      where,
-      include: {
-        order: {
-          select: {
-            id: true,
-            orderNumber: true,
-            customerName: true,
-            customerPhone: true,
-          },
-        },
-        createdBy: {
-          select: { id: true, firstName: true, lastName: true },
-        },
-        assignedTo: {
-          select: { id: true, firstName: true, lastName: true },
-        },
-        _count: {
-          select: { notes: true },
-        },
+  const skip = (page - 1) * pageSize;
+
+  const ticketInclude = {
+    order: {
+      select: {
+        id: true,
+        orderNumber: true,
+        customerName: true,
+        customerPhone: true,
       },
-      orderBy: { createdAt: "desc" },
-    }),
+    },
+    createdBy: {
+      select: { id: true, firstName: true, lastName: true },
+    },
+    assignedTo: {
+      select: { id: true, firstName: true, lastName: true },
+    },
+    _count: {
+      select: { notes: true },
+    },
+  };
+
+  // When filtering by specific status, we can paginate at DB level
+  // since the primary sort key is already constrained
+  const hasStatusFilter = !!params.tstatus;
+
+  const [tickets, total] = await Promise.all([
+    hasStatusFilter
+      ? prisma.ticket.findMany({
+          where,
+          include: ticketInclude,
+          orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+          skip,
+          take: pageSize,
+        })
+      : // Without status filter, fetch open/active tickets first via two queries
+        // to avoid loading entire table
+        (async () => {
+          // Fetch active tickets (OPEN, IN_PROGRESS, PENDING) with DB pagination
+          const activeWhere = { ...where, status: { in: ["OPEN", "IN_PROGRESS", "PENDING"] } };
+          const activeCount = await prisma.ticket.count({ where: activeWhere });
+
+          if (skip < activeCount) {
+            // Current page falls within active tickets
+            const activeTickets = await prisma.ticket.findMany({
+              where: activeWhere,
+              include: ticketInclude,
+              orderBy: [{ createdAt: "desc" }],
+              skip,
+              take: pageSize,
+            });
+            if (activeTickets.length >= pageSize) return activeTickets;
+
+            // Need to fill remaining from resolved/closed
+            const remaining = pageSize - activeTickets.length;
+            const closedTickets = await prisma.ticket.findMany({
+              where: { ...where, status: { in: ["RESOLVED", "CLOSED"] } },
+              include: ticketInclude,
+              orderBy: [{ createdAt: "desc" }],
+              take: remaining,
+            });
+            return [...activeTickets, ...closedTickets];
+          } else {
+            // Current page is past active tickets, only show resolved/closed
+            const closedSkip = skip - activeCount;
+            return prisma.ticket.findMany({
+              where: { ...where, status: { in: ["RESOLVED", "CLOSED"] } },
+              include: ticketInclude,
+              orderBy: [{ createdAt: "desc" }],
+              skip: closedSkip,
+              take: pageSize,
+            });
+          }
+        })(),
     prisma.ticket.count({ where }),
   ]);
-
-  // Sort: status (OPEN first) → priority (URGENT first) → createdAt (newest first)
-  allTickets.sort((a, b) => {
-    const statusA = statusOrder[a.status] ?? 99;
-    const statusB = statusOrder[b.status] ?? 99;
-    if (statusA !== statusB) return statusA - statusB;
-
-    const prioA = priorityOrder[a.priority] ?? 99;
-    const prioB = priorityOrder[b.priority] ?? 99;
-    if (prioA !== prioB) return prioA - prioB;
-
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
-
-  // Manual pagination
-  const skip = (page - 1) * pageSize;
-  const tickets = allTickets.slice(skip, skip + pageSize);
 
   return {
     tickets,

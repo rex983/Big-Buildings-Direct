@@ -2,7 +2,6 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   Table,
   TableBody,
@@ -42,15 +41,18 @@ async function getCustomers(searchParams: SearchParams) {
     prisma.user.findMany({
       where,
       include: {
+        _count: {
+          select: { customerOrders: true },
+        },
         customerOrders: {
           select: {
             id: true,
-            status: true,
             totalPrice: true,
             createdAt: true,
             sentToManufacturer: true,
           },
           orderBy: { createdAt: "desc" },
+          take: 5, // Only need latest order + counts, not all orders
         },
       },
       orderBy: { createdAt: "desc" },
@@ -130,13 +132,7 @@ export default async function CustomersPage({
                 </TableHeader>
                 <TableBody>
                   {customers.map((customer) => {
-                    const orderCount = customer.customerOrders.length;
-                    const activeOrders = customer.customerOrders.filter(
-                      (o) => o.status === "ACTIVE" && !o.sentToManufacturer
-                    ).length;
-                    const completedOrders = customer.customerOrders.filter(
-                      (o) => o.status === "COMPLETED" || o.sentToManufacturer
-                    ).length;
+                    const orderCount = customer._count.customerOrders;
                     const totalValue = customer.customerOrders.reduce(
                       (sum, o) => sum + Number(o.totalPrice),
                       0
@@ -170,19 +166,7 @@ export default async function CustomersPage({
                           )}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <span>{orderCount} total</span>
-                            {activeOrders > 0 && (
-                              <Badge variant="info">
-                                {activeOrders} active
-                              </Badge>
-                            )}
-                            {completedOrders > 0 && (
-                              <Badge variant="success">
-                                {completedOrders} completed
-                              </Badge>
-                            )}
-                          </div>
+                          <span>{orderCount}</span>
                         </TableCell>
                         <TableCell>
                           {formatCurrency(totalValue)}

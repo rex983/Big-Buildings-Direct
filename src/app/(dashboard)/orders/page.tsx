@@ -1,5 +1,4 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,128 +13,11 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { StatusCheckbox } from "@/components/features/orders/status-checkbox";
+import { getOrders } from "@/lib/order-process";
 
 interface SearchParams {
   page?: string;
-  status?: string;
   search?: string;
-}
-
-async function getOrders(
-  userId: string,
-  roleName: string,
-  isAdmin: boolean,
-  canViewAll: boolean,
-  searchParams: SearchParams
-) {
-  const page = parseInt(searchParams.page || "1", 10);
-  const pageSize = 10;
-  const skip = (page - 1) * pageSize;
-  const isSalesRep = roleName === "Sales Rep";
-
-  const baseWhere = isAdmin || canViewAll ? {} : { salesRepId: userId };
-
-  // For sales reps, treat "sent to manufacturer" as completed
-  // They should only see orders that haven't been sent to manufacturer yet (their active work)
-  let statusFilter = {};
-  if (searchParams.status) {
-    if (isSalesRep && searchParams.status === "COMPLETED") {
-      // Sales reps viewing "completed" = sent to manufacturer
-      statusFilter = { sentToManufacturer: true };
-    } else if (isSalesRep && searchParams.status === "ACTIVE") {
-      // Sales reps viewing "active" = not yet sent to manufacturer
-      statusFilter = { status: "ACTIVE", sentToManufacturer: false };
-    } else {
-      statusFilter = { status: searchParams.status };
-    }
-  }
-
-  const searchFilter = searchParams.search
-    ? {
-        OR: [
-          { orderNumber: { contains: searchParams.search } },
-          { customerName: { contains: searchParams.search } },
-          { customerEmail: { contains: searchParams.search } },
-        ],
-      }
-    : {};
-
-  const where = { ...baseWhere, ...statusFilter, ...searchFilter };
-
-  const [orders, total] = await Promise.all([
-    prisma.order.findMany({
-      where,
-      include: {
-        currentStage: true,
-        salesRep: { select: { firstName: true, lastName: true } },
-      },
-      orderBy: { createdAt: "desc" },
-      skip,
-      take: pageSize,
-    }),
-    prisma.order.count({ where }),
-  ]);
-
-  // For sales reps, mark orders sent to manufacturer as "completed" in display
-  const processedOrders = orders.map(order => ({
-    ...order,
-    displayStatus: isSalesRep && order.sentToManufacturer ? "COMPLETED" : order.status,
-  }));
-
-  return {
-    orders: processedOrders,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
-    isSalesRep,
-  };
-}
-
-function getStatusBadge(status: string) {
-  switch (status) {
-    case "ACTIVE":
-      return <Badge variant="info">Active</Badge>;
-    case "COMPLETED":
-      return <Badge variant="success">Completed</Badge>;
-    case "CANCELLED":
-      return <Badge variant="destructive">Cancelled</Badge>;
-    case "ON_HOLD":
-      return <Badge variant="warning">On Hold</Badge>;
-    default:
-      return null;
-  }
-}
-
-function getPriorityBadge(priority: string) {
-  switch (priority) {
-    case "URGENT":
-      return <Badge variant="destructive">Urgent</Badge>;
-    case "HIGH":
-      return <Badge variant="warning">High</Badge>;
-    case "NORMAL":
-      return null;
-    case "LOW":
-      return <Badge variant="secondary">Low</Badge>;
-    default:
-      return null;
-  }
-}
-
-function StatusIndicator({ completed, label }: { completed: boolean; label: string }) {
-  return (
-    <div className="flex flex-col items-center gap-0.5" title={label}>
-      {completed ? (
-        <svg className="h-5 w-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-      ) : (
-        <svg className="h-5 w-5 text-muted-foreground/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <circle cx="12" cy="12" r="9" />
-        </svg>
-      )}
-    </div>
-  );
 }
 
 export default async function OrdersPage({
@@ -145,22 +27,28 @@ export default async function OrdersPage({
 }) {
   const session = await auth();
   const user = session!.user;
-  const isAdmin = user.roleName === "Admin";
+  const isAdminUser = user.roleName === "Admin";
   const canViewAll = user.permissions.includes("orders.view_all");
-  const canCreate = isAdmin || user.permissions.includes("orders.create");
 
   const params = await searchParams;
-  const { orders, total, page, totalPages, isSalesRep } = await getOrders(
-    user.id,
-    user.roleName,
-    isAdmin,
-    canViewAll,
-    params
-  );
+  const page = parseInt(params.page || "1", 10);
 
-  // Determine if user can edit status checkboxes
+  const salesPerson =
+    isAdminUser || canViewAll
+      ? undefined
+      : `${user.firstName} ${user.lastName}`;
+
+  const result = await getOrders({
+    page,
+    pageSize: 10,
+    search: params.search,
+    salesPerson,
+  });
+
+  const { orders, total, totalPages } = result;
+
   const canEditStatus =
-    isAdmin ||
+    isAdminUser ||
     user.roleName === "Manager" ||
     user.roleName === "BST" ||
     user.permissions.includes("orders.edit");
@@ -174,11 +62,6 @@ export default async function OrdersPage({
             Manage and track building orders
           </p>
         </div>
-        {canCreate && (
-          <Link href="/orders/new">
-            <Button>New Order</Button>
-          </Link>
-        )}
       </div>
 
       <Card>
@@ -193,19 +76,8 @@ export default async function OrdersPage({
                 defaultValue={params.search}
                 className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
               />
-              <select
-                name="status"
-                defaultValue={params.status}
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
-              >
-                <option value="">All Status</option>
-                <option value="ACTIVE">Active</option>
-                <option value="COMPLETED">Completed</option>
-                <option value="CANCELLED">Cancelled</option>
-                <option value="ON_HOLD">On Hold</option>
-              </select>
               <Button type="submit" size="sm">
-                Filter
+                Search
               </Button>
             </form>
           </div>
@@ -237,9 +109,9 @@ export default async function OrdersPage({
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">
                         {order.orderNumber}
-                        {getPriorityBadge(order.priority) && (
+                        {order.status === "cancelled" && (
                           <span className="ml-2">
-                            {getPriorityBadge(order.priority)}
+                            <Badge variant="destructive">Cancelled</Badge>
                           </span>
                         )}
                       </TableCell>
@@ -295,7 +167,7 @@ export default async function OrdersPage({
                           label="Sent to Manufacturer"
                         />
                       </TableCell>
-                      <TableCell>{formatCurrency(order.totalPrice.toString())}</TableCell>
+                      <TableCell>{formatCurrency(order.totalPrice)}</TableCell>
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       <TableCell>
                         <Link href={`/orders/${order.id}`}>
@@ -316,12 +188,12 @@ export default async function OrdersPage({
                   </p>
                   <div className="flex gap-2">
                     {page > 1 && (
-                      <Link href={`/orders?page=${page - 1}&status=${params.status || ""}&search=${params.search || ""}`}>
+                      <Link href={`/orders?page=${page - 1}&search=${params.search || ""}`}>
                         <Button variant="outline" size="sm">Previous</Button>
                       </Link>
                     )}
                     {page < totalPages && (
-                      <Link href={`/orders?page=${page + 1}&status=${params.status || ""}&search=${params.search || ""}`}>
+                      <Link href={`/orders?page=${page + 1}&search=${params.search || ""}`}>
                         <Button variant="outline" size="sm">Next</Button>
                       </Link>
                     )}

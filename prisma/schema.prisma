@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ============================================
@@ -20,6 +20,7 @@ model User {
   phone         String?
   avatar        String?
   office        String?   // "Marion Office" or "Harbor Office"
+  department    String?   // e.g. "Sales", "Operations", "BST", "R&D"
   isActive      Boolean   @default(true)
   emailVerified DateTime?
   createdAt     DateTime  @default(now())
@@ -182,6 +183,7 @@ model Order {
   depositDate      DateTime?
   depositChargeStatus String? // Accepted, Accepted after decline, etc.
   depositPercentage   String?
+  depositNotes        String?
 
   // Status (ACTIVE, COMPLETED, CANCELLED, ON_HOLD)
   status           String   @default("ACTIVE")
@@ -205,6 +207,11 @@ model Order {
   // External links
   submittedFormsUrl   String?
   sabrinaFormsUrl     String?
+
+  // E-sign integration
+  esignOrderId      String?   // E-sign order document ID
+  esignDocumentId   String?   // E-sign document ID
+  signedPdfUrl      String?   // URL to signed PDF
 
   // Notes
   specialNotes        String?
@@ -252,6 +259,8 @@ model Order {
   @@index([dateSold])
   @@index([wcStatus])
   @@index([lppStatus])
+  @@index([depositChargeStatus])
+  @@index([esignOrderId])
 }
 
 // ============================================
@@ -732,8 +741,9 @@ model PayPlan {
   id          String   @id @default(cuid())
   month       Int      // 1-12
   year        Int
-  salary      Decimal  @default(0)
-  createdAt   DateTime @default(now())
+  salary                Decimal  @default(0)
+  cancellationDeduction Decimal  @default(0)
+  createdAt             DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   // Relations
@@ -772,6 +782,11 @@ model PayLedger {
   buildingsSold    Int      @default(0)
   totalOrderAmount Decimal  @default(0)
   planTotal        Decimal  @default(0)
+  tierBonusAmount  Decimal  @default(0)
+  monthlySalary    Decimal  @default(0)
+  commissionAmount Decimal  @default(0)
+  cancellationDeduction Decimal @default(0)
+  cancellationNote String?
   adjustment       Decimal  @default(0)
   adjustmentNote   String?
   finalAmount      Decimal  @default(0)

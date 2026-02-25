@@ -12,6 +12,8 @@ const updateUserSchema = z.object({
   phone: z.string().optional(),
   roleId: z.string().optional(),
   isActive: z.boolean().optional(),
+  office: z.string().nullable().optional(),
+  department: z.string().nullable().optional(),
 });
 
 export async function GET(

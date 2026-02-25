@@ -5,80 +5,14 @@ import { prisma } from "@/lib/prisma";
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { OrderStageAdvance } from "@/components/features/orders/order-stage-advance";
-import { OrderTimeline } from "@/components/features/orders/order-timeline";
 import { OrderFiles } from "@/components/features/orders/order-files";
 import { OrderMessages } from "@/components/features/orders/order-messages";
 import { OrderActivity } from "@/components/features/orders/order-activity";
-import { StatusSelect } from "@/components/features/orders/status-select";
-
-// WC Status options for the dropdown
-const wcStatusOptions = [
-  { value: "Pending", label: "Pending", color: "gray" },
-  { value: "No Contact Made", label: "No Contact Made", color: "orange" },
-  { value: "Contact Made", label: "Contact Made", color: "green" },
-];
-
-// LP&P Status options for the dropdown
-const lppStatusOptions = [
-  { value: "Pending", label: "Pending", color: "gray" },
-  { value: "Ready for Install", label: "Ready for Install", color: "green" },
-];
-
-async function getOrder(orderId: string, userId: string, isAdmin: boolean, canViewAll: boolean) {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      currentStage: true,
-      customer: { select: { id: true, firstName: true, lastName: true, email: true } },
-      salesRep: { select: { id: true, firstName: true, lastName: true } },
-      stageHistory: {
-        include: { stage: true },
-        orderBy: { createdAt: "asc" },
-      },
-      files: {
-        include: { file: true },
-        orderBy: { createdAt: "desc" },
-      },
-      documents: {
-        include: { file: true, createdBy: { select: { firstName: true, lastName: true } } },
-        orderBy: { createdAt: "desc" },
-      },
-      messages: {
-        include: { sender: { select: { id: true, firstName: true, lastName: true, avatar: true } } },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-      },
-      activities: {
-        include: { user: { select: { firstName: true, lastName: true } } },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-      },
-      revisions: {
-        include: { salesRep: { select: { firstName: true, lastName: true } } },
-        orderBy: { revisionDate: "desc" },
-      },
-    },
-  });
-
-  if (!order) return null;
-
-  // Check access
-  if (!isAdmin && !canViewAll && order.salesRepId !== userId) {
-    return null;
-  }
-
-  return order;
-}
-
-async function getStages() {
-  return prisma.orderStage.findMany({
-    where: { isActive: true },
-    orderBy: { sortOrder: "asc" },
-  });
-}
+import { StatusCheckbox } from "@/components/features/orders/status-checkbox";
+import { OrderRealtimeListener } from "@/components/features/orders/order-realtime-listener";
+import { getOrder } from "@/lib/order-process";
+import { OP_STAGE_MAP, OP_STATUS_ORDER } from "@/types/order-process";
 
 export default async function OrderDetailPage({
   params,
@@ -89,39 +23,107 @@ export default async function OrderDetailPage({
 }) {
   const { orderId } = await params;
   const { tab } = await searchParams;
-  const defaultTab = tab || "files";
+  const defaultTab = tab || "details";
   const session = await auth();
   const user = session!.user;
-  const isAdmin = user.roleName === "Admin";
+  const isAdminUser = user.roleName === "Admin";
   const canViewAll = user.permissions.includes("orders.view_all");
-  const canAdvance = isAdmin || user.permissions.includes("orders.advance_stage");
-  const canViewInternal = isAdmin || user.permissions.includes("messages.view_internal");
-  const canEditBstStatus = isAdmin || user.roleName === "Manager" || user.roleName === "BST";
+  const isManager = user.roleName === "Manager";
+  const canEdit = isAdminUser || isManager || user.permissions.includes("orders.edit");
+  const canViewInternal = isAdminUser || user.permissions.includes("messages.view_internal");
 
-  const [order, stages] = await Promise.all([
-    getOrder(orderId, user.id, isAdmin, canViewAll),
-    getStages(),
-  ]);
+  // Get order data from Order Process
+  const order = await getOrder(orderId);
 
   if (!order) {
     notFound();
   }
 
-  const statusColors: Record<string, string> = {
-    ACTIVE: "info",
-    COMPLETED: "success",
-    CANCELLED: "destructive",
-    ON_HOLD: "warning",
-  };
+  // Access check: non-admins can only see their orders
+  const userName = `${user.firstName} ${user.lastName}`;
+  if (!isAdminUser && !canViewAll && order.salesPerson !== userName) {
+    notFound();
+  }
+
+  // Get BBD-specific data (messages, activities, files, documents, revisions) from Prisma
+  // These may not exist yet if the order hasn't had any BBD interactions
+  const [messages, activities, files, documents, revisions] = await Promise.all([
+    prisma.message
+      .findMany({
+        where: { orderId },
+        include: {
+          sender: {
+            select: { id: true, firstName: true, lastName: true, avatar: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      })
+      .catch(() => []),
+    prisma.orderActivity
+      .findMany({
+        where: { orderId },
+        include: {
+          user: { select: { firstName: true, lastName: true } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      })
+      .catch(() => []),
+    prisma.orderFile
+      .findMany({
+        where: { orderId },
+        include: { file: true },
+        orderBy: { createdAt: "desc" },
+      })
+      .catch(() => []),
+    prisma.document
+      .findMany({
+        where: { orderId },
+        include: {
+          file: true,
+          createdBy: { select: { firstName: true, lastName: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      })
+      .catch(() => []),
+    prisma.revision
+      .findMany({
+        where: { orderId },
+        include: {
+          salesRep: { select: { firstName: true, lastName: true } },
+        },
+        orderBy: { revisionDate: "desc" },
+      })
+      .catch(() => []),
+  ]);
+
+  // Build the stage progress display from Order Process status
+  const statusIndex = OP_STATUS_ORDER.indexOf(order.status);
+  const stageSteps = OP_STATUS_ORDER.filter((s) => s !== "cancelled").map(
+    (status, i) => ({
+      name: OP_STAGE_MAP[status].name,
+      color: OP_STAGE_MAP[status].color,
+      completed: order.status !== "cancelled" && statusIndex >= i,
+      current: order.status === status,
+    })
+  );
 
   return (
     <div className="space-y-6">
+      <OrderRealtimeListener orderId={order.id} />
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold">{order.orderNumber}</h1>
-            <Badge variant={statusColors[order.status] as "default"}>
-              {order.status}
+            <Badge
+              variant="outline"
+              style={{
+                borderColor: order.currentStage.color,
+                color: order.currentStage.color,
+              }}
+            >
+              {order.currentStage.name}
             </Badge>
           </div>
           <p className="text-muted-foreground mt-1">
@@ -132,22 +134,75 @@ export default async function OrderDetailPage({
 
       {/* Stage Progress */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>Order Progress</CardTitle>
-          {canAdvance && order.status === "ACTIVE" && (
-            <OrderStageAdvance
-              orderId={order.id}
-              currentStageId={order.currentStageId}
-              stages={stages}
-            />
-          )}
         </CardHeader>
         <CardContent>
-          <OrderTimeline
-            stages={stages}
-            currentStageId={order.currentStageId}
-            stageHistory={order.stageHistory}
-          />
+          <div className="flex items-center gap-2">
+            {stageSteps.map((step, i) => (
+              <div key={step.name} className="flex items-center gap-2 flex-1">
+                <div
+                  className={`flex items-center justify-center w-8 h-8 rounded-full text-xs font-bold border-2 ${
+                    step.completed
+                      ? "text-white"
+                      : "text-muted-foreground border-muted"
+                  }`}
+                  style={
+                    step.completed
+                      ? { backgroundColor: step.color, borderColor: step.color }
+                      : undefined
+                  }
+                >
+                  {step.completed ? "✓" : i + 1}
+                </div>
+                <span
+                  className={`text-xs ${
+                    step.current ? "font-bold" : "text-muted-foreground"
+                  }`}
+                  style={step.current ? { color: step.color } : undefined}
+                >
+                  {step.name}
+                </span>
+                {i < stageSteps.length - 1 && (
+                  <div
+                    className={`flex-1 h-0.5 ${
+                      step.completed ? "bg-green-500" : "bg-muted"
+                    }`}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Workflow Checkboxes */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Workflow Status</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-around">
+            {(
+              [
+                { field: "depositCollected" as const, label: "Deposit Collected", checked: order.depositCollected },
+                { field: "sentToCustomer" as const, label: "Sent to Customer", checked: order.sentToCustomer },
+                { field: "customerSigned" as const, label: "Customer Signed", checked: order.customerSigned },
+                { field: "sentToManufacturer" as const, label: "Sent to Manufacturer", checked: order.sentToManufacturer },
+              ] as const
+            ).map((item) => (
+              <div key={item.field} className="flex flex-col items-center gap-1">
+                <StatusCheckbox
+                  orderId={order.id}
+                  field={item.field}
+                  checked={item.checked}
+                  canEdit={canEdit}
+                  label={item.label}
+                />
+                <span className="text-xs text-muted-foreground">{item.label}</span>
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
 
@@ -159,32 +214,10 @@ export default async function OrderDetailPage({
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
-              {order.customer ? (
-                <Link
-                  href={`/customers/${order.customer.id}`}
-                  className="font-medium text-primary hover:underline"
-                >
-                  {order.customerName}
-                </Link>
-              ) : (
-                <p className="font-medium">{order.customerName}</p>
-              )}
+              <p className="font-medium">{order.customerName}</p>
               <p className="text-sm text-muted-foreground">{order.customerEmail}</p>
               {order.customerPhone && (
                 <p className="text-sm text-muted-foreground">{order.customerPhone}</p>
-              )}
-              {order.customer && (
-                <>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Customer ID: {order.customer.id.slice(0, 12)}...
-                  </p>
-                  <Link
-                    href={`/customers/${order.customer.id}`}
-                    className="text-xs text-primary hover:underline"
-                  >
-                    View Full Journey
-                  </Link>
-                </>
               )}
             </div>
           </CardContent>
@@ -197,14 +230,22 @@ export default async function OrderDetailPage({
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-2 gap-2 text-sm">
+              <span className="text-muted-foreground">Manufacturer:</span>
+              <span>{order.manufacturer}</span>
               <span className="text-muted-foreground">Type:</span>
               <span>{order.buildingType}</span>
               <span className="text-muted-foreground">Size:</span>
               <span>{order.buildingSize}</span>
-              {order.buildingColor && (
+              {order.buildingHeight && (
                 <>
-                  <span className="text-muted-foreground">Color:</span>
-                  <span>{order.buildingColor}</span>
+                  <span className="text-muted-foreground">Height:</span>
+                  <span>{order.buildingHeight}</span>
+                </>
+              )}
+              {order.foundationType && (
+                <>
+                  <span className="text-muted-foreground">Foundation:</span>
+                  <span>{order.foundationType}</span>
                 </>
               )}
             </div>
@@ -219,9 +260,9 @@ export default async function OrderDetailPage({
           <CardContent className="space-y-3">
             <div className="grid grid-cols-2 gap-2 text-sm">
               <span className="text-muted-foreground">Total Price:</span>
-              <span className="font-medium">{formatCurrency(order.totalPrice.toString())}</span>
+              <span className="font-medium">{formatCurrency(order.totalPrice)}</span>
               <span className="text-muted-foreground">Deposit:</span>
-              <span>{formatCurrency(order.depositAmount.toString())}</span>
+              <span>{formatCurrency(order.depositAmount)}</span>
               <span className="text-muted-foreground">Deposit Status:</span>
               <span>
                 {order.depositCollected ? (
@@ -230,10 +271,22 @@ export default async function OrderDetailPage({
                   <Badge variant="warning">Pending</Badge>
                 )}
               </span>
-              {order.depositDate && (
+              {order.ledgerSummary && (
                 <>
-                  <span className="text-muted-foreground">Deposit Date:</span>
-                  <span>{formatDate(order.depositDate)}</span>
+                  <span className="text-muted-foreground">Net Received:</span>
+                  <span>{formatCurrency(order.ledgerSummary.netReceived)}</span>
+                  <span className="text-muted-foreground">Balance:</span>
+                  <span
+                    className={
+                      order.ledgerSummary.balanceStatus === "paid"
+                        ? "text-green-600"
+                        : order.ledgerSummary.balanceStatus === "overpaid"
+                          ? "text-blue-600"
+                          : "text-amber-600"
+                    }
+                  >
+                    {formatCurrency(order.ledgerSummary.balance)} ({order.ledgerSummary.balanceStatus})
+                  </span>
                 </>
               )}
             </div>
@@ -249,77 +302,131 @@ export default async function OrderDetailPage({
         <CardContent>
           <p>{order.deliveryAddress}</p>
           <p>
-            {order.deliveryCity}, {order.deliveryState} {order.deliveryZip}
+            {order.deliveryState} {order.deliveryZip}
           </p>
-          {order.deliveryNotes && (
-            <p className="mt-2 text-sm text-muted-foreground">
-              Notes: {order.deliveryNotes}
-            </p>
-          )}
         </CardContent>
       </Card>
 
-      {/* BST Status - only show when order has been sent to manufacturer */}
-      {order.sentToManufacturer && (
+      {/* Notes */}
+      {(order.specialNotes || order.paymentNotes) && (
         <Card>
           <CardHeader>
-            <CardTitle>BST Status</CardTitle>
+            <CardTitle>Notes</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-muted-foreground">
-                  Welcome Call Status
-                </label>
-                <StatusSelect
-                  orderId={order.id}
-                  field="wcStatus"
-                  value={order.wcStatus}
-                  options={wcStatusOptions}
-                  canEdit={canEditBstStatus}
-                  label="Welcome Call Status"
-                />
-                {order.wcStatusDate && (
-                  <p className="text-xs text-muted-foreground">
-                    Updated: {formatDate(order.wcStatusDate)}
-                  </p>
-                )}
+          <CardContent className="space-y-2">
+            {order.specialNotes && (
+              <div>
+                <span className="text-sm font-medium text-muted-foreground">Special Notes: </span>
+                <span className="text-sm">{order.specialNotes}</span>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-muted-foreground">
-                  Land, Pad & Permit Status
-                </label>
-                <StatusSelect
-                  orderId={order.id}
-                  field="lppStatus"
-                  value={order.lppStatus}
-                  options={lppStatusOptions}
-                  canEdit={canEditBstStatus}
-                  label="LP&P Status"
-                />
-                {order.lppStatusDate && (
-                  <p className="text-xs text-muted-foreground">
-                    Updated: {formatDate(order.lppStatusDate)}
-                  </p>
-                )}
+            )}
+            {order.paymentNotes && (
+              <div>
+                <span className="text-sm font-medium text-muted-foreground">Payment Notes: </span>
+                <span className="text-sm">{order.paymentNotes}</span>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {/* Tabs for Files, Messages, Activity, Revisions */}
+      {/* Tabs for BBD-specific features */}
       <Tabs defaultValue={defaultTab}>
         <TabsList>
-          <TabsTrigger value="files">Files ({order.files.length})</TabsTrigger>
-          <TabsTrigger value="documents">Documents ({order.documents.length})</TabsTrigger>
-          <TabsTrigger value="messages">Messages ({order.messages.length})</TabsTrigger>
-          <TabsTrigger value="activity">Activity ({order.activities.length})</TabsTrigger>
-          <TabsTrigger value="revisions">Revisions ({order.revisions.length})</TabsTrigger>
+          <TabsTrigger value="details">Order Files</TabsTrigger>
+          <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
+          <TabsTrigger value="messages">Messages ({messages.length})</TabsTrigger>
+          <TabsTrigger value="activity">Activity ({activities.length})</TabsTrigger>
+          <TabsTrigger value="revisions">Revisions ({revisions.length})</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="files">
-          <OrderFiles orderId={order.id} files={order.files} />
+        <TabsContent value="details">
+          {/* Show Order Process files from JSONB */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Order Files</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(!order.files.orderFormPdf &&
+                order.files.renderings.length === 0 &&
+                order.files.extraFiles.length === 0 &&
+                order.files.installerFiles.length === 0) ? (
+                <p className="text-muted-foreground text-center py-4">No files attached</p>
+              ) : (
+                <div className="space-y-3">
+                  {order.files.orderFormPdf && (
+                    <div className="flex items-center justify-between p-3 border rounded-lg">
+                      <div>
+                        <p className="font-medium">{order.files.orderFormPdf.name}</p>
+                        <p className="text-xs text-muted-foreground">Order Form PDF</p>
+                      </div>
+                      <a
+                        href={order.files.orderFormPdf.downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline"
+                      >
+                        Download
+                      </a>
+                    </div>
+                  )}
+                  {order.files.renderings.map((file, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div>
+                        <p className="font-medium">{file.name}</p>
+                        <p className="text-xs text-muted-foreground">Rendering</p>
+                      </div>
+                      <a
+                        href={file.downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline"
+                      >
+                        Download
+                      </a>
+                    </div>
+                  ))}
+                  {order.files.extraFiles.map((file, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div>
+                        <p className="font-medium">{file.name}</p>
+                        <p className="text-xs text-muted-foreground">Extra File</p>
+                      </div>
+                      <a
+                        href={file.downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline"
+                      >
+                        Download
+                      </a>
+                    </div>
+                  ))}
+                  {order.files.installerFiles.map((file, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div>
+                        <p className="font-medium">{file.name}</p>
+                        <p className="text-xs text-muted-foreground">Installer File</p>
+                      </div>
+                      <a
+                        href={file.downloadUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline"
+                      >
+                        Download
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Also show BBD-uploaded files */}
+          {files.length > 0 && (
+            <OrderFiles orderId={order.id} files={files} />
+          )}
         </TabsContent>
 
         <TabsContent value="documents">
@@ -328,11 +435,11 @@ export default async function OrderDetailPage({
               <CardTitle>Documents</CardTitle>
             </CardHeader>
             <CardContent>
-              {order.documents.length === 0 ? (
+              {documents.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">No documents yet</p>
               ) : (
                 <div className="space-y-3">
-                  {order.documents.map((doc) => (
+                  {documents.map((doc) => (
                     <div key={doc.id} className="flex items-center justify-between p-3 border rounded-lg">
                       <div>
                         <p className="font-medium">{doc.title}</p>
@@ -340,11 +447,17 @@ export default async function OrderDetailPage({
                           Created by {doc.createdBy.firstName} {doc.createdBy.lastName}
                         </p>
                       </div>
-                      <Badge variant={
-                        doc.status === "SIGNED" ? "success" :
-                        doc.status === "SENT" ? "info" :
-                        doc.status === "VIEWED" ? "warning" : "secondary"
-                      }>
+                      <Badge
+                        variant={
+                          doc.status === "SIGNED"
+                            ? "success"
+                            : doc.status === "SENT"
+                              ? "info"
+                              : doc.status === "VIEWED"
+                                ? "warning"
+                                : "secondary"
+                        }
+                      >
                         {doc.status}
                       </Badge>
                     </div>
@@ -358,13 +471,13 @@ export default async function OrderDetailPage({
         <TabsContent value="messages">
           <OrderMessages
             orderId={order.id}
-            messages={order.messages}
+            messages={messages}
             canViewInternal={canViewInternal}
           />
         </TabsContent>
 
         <TabsContent value="activity">
-          <OrderActivity activities={order.activities} />
+          <OrderActivity activities={activities} />
         </TabsContent>
 
         <TabsContent value="revisions">
@@ -373,11 +486,11 @@ export default async function OrderDetailPage({
               <CardTitle>Order Revisions</CardTitle>
             </CardHeader>
             <CardContent>
-              {order.revisions.length === 0 ? (
+              {revisions.length === 0 ? (
                 <p className="text-muted-foreground text-center py-4">No revisions for this order</p>
               ) : (
                 <div className="space-y-4">
-                  {order.revisions.map((revision) => (
+                  {revisions.map((revision) => (
                     <div key={revision.id} className="border rounded-lg p-4 space-y-3">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
@@ -414,29 +527,19 @@ export default async function OrderDetailPage({
                         {revision.depositDiff && (
                           <div>
                             <span className="text-muted-foreground block">Deposit Change</span>
-                            <span className={Number(revision.depositDiff) >= 0 ? "text-green-600" : "text-red-600"}>
+                            <span
+                              className={
+                                Number(revision.depositDiff) >= 0
+                                  ? "text-green-600"
+                                  : "text-red-600"
+                              }
+                            >
                               {Number(revision.depositDiff) >= 0 ? "+" : ""}
                               {formatCurrency(revision.depositDiff.toString())}
                             </span>
                           </div>
                         )}
-                        {revision.revisionFee && (
-                          <div>
-                            <span className="text-muted-foreground block">Rev Fee</span>
-                            <span>{formatCurrency(revision.revisionFee.toString())}</span>
-                          </div>
-                        )}
                       </div>
-
-                      {revision.changingManufacturer && (
-                        <div className="text-sm bg-muted/50 p-2 rounded">
-                          <span className="text-muted-foreground">Manufacturer: </span>
-                          {revision.originalManufacturer && (
-                            <span>{revision.originalManufacturer} → </span>
-                          )}
-                          <span className="font-medium">{revision.newManufacturer || "New Manufacturer"}</span>
-                        </div>
-                      )}
 
                       {revision.revisionNotes && (
                         <div className="text-sm">
@@ -444,44 +547,6 @@ export default async function OrderDetailPage({
                           <span>{revision.revisionNotes}</span>
                         </div>
                       )}
-
-                      <div className="flex items-center justify-between text-sm pt-2 border-t">
-                        <div className="flex items-center gap-4">
-                          <div className="flex items-center gap-1">
-                            {revision.sentToCustomer ? (
-                              <Badge variant="success" className="text-xs">Sent to Customer</Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-xs">Not Sent</Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {revision.customerSigned ? (
-                              <Badge variant="success" className="text-xs">Signed</Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-xs">Unsigned</Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {revision.sentToManufacturer ? (
-                              <Badge variant="success" className="text-xs">Sent to Mfr</Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-xs">Not Sent to Mfr</Badge>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          {revision.salesRep && (
-                            <span className="text-muted-foreground">
-                              Rep: {revision.salesRep.firstName} {revision.salesRep.lastName}
-                            </span>
-                          )}
-                          <Link href={`/revisions/${revision.id}`}>
-                            <Button variant="ghost" size="sm">
-                              Edit
-                            </Button>
-                          </Link>
-                        </div>
-                      </div>
                     </div>
                   ))}
                 </div>

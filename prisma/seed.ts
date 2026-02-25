@@ -65,6 +65,7 @@ async function main() {
     "documents.view", "documents.create", "documents.send",
     "messages.view", "messages.send", "messages.view_internal",
     "emails.view", "emails.send",
+    "pay.plan.view", "pay.plan.edit",
     "settings.view",
   ];
 

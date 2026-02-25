@@ -56,8 +56,21 @@ export const ActivityType = {
   NOTE_ADDED: "NOTE_ADDED",
   STATUS_CHANGED: "STATUS_CHANGED",
   BST_STATUS_CHANGED: "BST_STATUS_CHANGED",
+  DEPOSIT_STATUS_CHANGED: "DEPOSIT_STATUS_CHANGED",
+  ESIGN_SENT: "ESIGN_SENT",
+  ESIGN_SIGNED: "ESIGN_SIGNED",
+  ESIGN_DEPOSIT_COLLECTED: "ESIGN_DEPOSIT_COLLECTED",
 } as const;
 export type ActivityType = (typeof ActivityType)[keyof typeof ActivityType];
+
+export const DepositChargeStatus = {
+  READY: "Ready",
+  CHARGED: "Charged",
+  DECLINED: "Declined",
+  REFUNDED: "Refunded",
+  ACCEPTED_AFTER_DECLINE: "Accepted After Decline",
+} as const;
+export type DepositChargeStatus = (typeof DepositChargeStatus)[keyof typeof DepositChargeStatus];
 
 export const FileCategory = {
   CONTRACT: "CONTRACT",
@@ -208,6 +221,7 @@ export const PERMISSION_CATEGORIES = [
   "Files",
   "Documents",
   "Communications",
+  "Pay",
   "Settings",
 ] as const;
 
@@ -251,6 +265,12 @@ export const DEFAULT_PERMISSIONS = [
   { name: "messages.view_internal", category: "Communications", description: "View internal messages" },
   { name: "emails.view", category: "Communications", description: "View emails" },
   { name: "emails.send", category: "Communications", description: "Send emails" },
+
+  // Pay
+  { name: "pay.plan.view", category: "Pay", description: "View pay plans" },
+  { name: "pay.plan.edit", category: "Pay", description: "Edit pay plans" },
+  { name: "pay.ledger.view", category: "Pay", description: "View pay ledger" },
+  { name: "pay.ledger.edit", category: "Pay", description: "Edit pay ledger" },
 
   // Settings
   { name: "settings.view", category: "Settings", description: "View settings" },

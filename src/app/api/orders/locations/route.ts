@@ -1,43 +1,23 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { requirePermission } from "@/lib/auth";
+import { requirePermission, isAdmin } from "@/lib/auth";
+import { getOrderLocations } from "@/lib/order-process";
 
 export async function GET() {
   try {
     const user = await requirePermission("orders.view");
 
-    const isAdmin = user.roleName === "Admin";
-    const isManager = user.roleName === "Manager";
-    const canViewAll = user.permissions.includes("orders.view_all");
-    const hasFullAccess = isAdmin || isManager || canViewAll;
+    const hasFullAccess =
+      isAdmin(user.roleName) ||
+      user.roleName === "Manager" ||
+      user.permissions.includes("orders.view_all");
 
-    const whereClause = hasFullAccess
-      ? { status: { not: "CANCELLED" } as const }
-      : { status: { not: "CANCELLED" } as const, salesRepId: user.id };
+    const salesPerson = hasFullAccess
+      ? undefined
+      : `${user.firstName} ${user.lastName}`;
 
-    const orders = await prisma.order.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        orderNumber: true,
-        customerName: true,
-        buildingType: true,
-        buildingSize: true,
-        deliveryAddress: true,
-        deliveryCity: true,
-        deliveryState: true,
-        deliveryZip: true,
-        status: true,
-        totalPrice: true,
-        installer: true,
-        dateSold: true,
-        sentToManufacturer: true,
-        salesRep: { select: { id: true, firstName: true, lastName: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const locations = await getOrderLocations({ salesPerson });
 
-    return NextResponse.json({ success: true, data: orders });
+    return NextResponse.json({ success: true, data: locations });
   } catch (error) {
     console.error("GET /api/orders/locations error:", error);
     return NextResponse.json(

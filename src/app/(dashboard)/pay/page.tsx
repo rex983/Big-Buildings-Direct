@@ -7,6 +7,7 @@ import { PayPlanSection } from "@/components/features/pay/pay-plan-section";
 import { PayLedgerTable } from "@/components/features/pay/pay-ledger-table";
 import { SalaryTable } from "@/components/features/pay/salary-table";
 import { OfficeTierEditor } from "@/components/features/pay/office-tier-editor";
+import { OfficePaySection } from "@/components/features/pay/office-pay-section";
 import { PayAuditLog } from "@/components/features/pay/pay-audit-log";
 
 interface SearchParams {
@@ -56,7 +57,10 @@ export default async function PayPage({
       getOfficePayPlans(month, year),
     ]);
   } else if (activeTab === "ledger" && isAdmin) {
-    ledgerData = await getLedgerForMonth(month, year);
+    [ledgerData, planData] = await Promise.all([
+      getLedgerForMonth(month, year),
+      getPayPlansForMonth(month, year),
+    ]);
   } else if (activeTab === "activity") {
     auditLogs = await getPayAuditLogs(100);
   }
@@ -69,6 +73,7 @@ export default async function PayPage({
   const allReps = planData ?? [];
   const marionReps = allReps.filter((r) => r.office === "Marion Office");
   const harborReps = allReps.filter((r) => r.office === "Harbor Office");
+  const unassignedReps = allReps.filter((r) => !r.office);
 
   const mapRepsToSalaryData = (reps: typeof allReps) =>
     reps.map((rep) => ({
@@ -76,6 +81,7 @@ export default async function PayPage({
       firstName: rep.firstName,
       lastName: rep.lastName,
       salary: rep.salary.toString(),
+      cancellationDeduction: rep.payPlan?.cancellationDeduction?.toString() ?? "0",
       buildingsSold: rep.orderStats.buildingsSold,
       totalOrderAmount: rep.orderStats.totalOrderAmount.toString(),
     }));
@@ -97,17 +103,12 @@ export default async function PayPage({
     reps: typeof allReps
   ) => (
     <PayPlanSection title={officeName} defaultOpen>
-      <SalaryTable
-        reps={mapRepsToSalaryData(reps)}
-        month={month}
-        year={year}
-        canEdit={canEditPlan}
-      />
-      <OfficeTierEditor
+      <OfficePaySection
         office={officeName}
+        reps={mapRepsToSalaryData(reps)}
+        initialTiers={mapOfficeTiers(officeName)}
         month={month}
         year={year}
-        initialTiers={mapOfficeTiers(officeName)}
         canEdit={canEditPlan}
       />
     </PayPlanSection>
@@ -124,10 +125,31 @@ export default async function PayPage({
         renderOfficeSection("Marion Office", marionReps)}
       {(harborReps.length > 0 || officePlans?.["Harbor Office"]) &&
         renderOfficeSection("Harbor Office", harborReps)}
+      {unassignedReps.length > 0 && (
+        <PayPlanSection title="Unassigned Office" defaultOpen>
+          <p className="text-sm text-muted-foreground mb-2">
+            These sales reps have no office assigned. Assign them an office in Team Management to include them in office pay plans.
+          </p>
+          <SalaryTable
+            reps={mapRepsToSalaryData(unassignedReps)}
+            tiers={[]}
+            month={month}
+            year={year}
+            canEdit={canEditPlan}
+          />
+        </PayPlanSection>
+      )}
     </div>
   );
 
   // ============ Ledger Tab Content ============
+
+  // Build salesReps list for the cancelled orders dialog
+  const ledgerSalesReps = (planData ?? []).map((rep) => ({
+    id: rep.id,
+    firstName: rep.firstName,
+    lastName: rep.lastName,
+  }));
 
   const ledgerContent = (
     <PayLedgerTable
@@ -136,11 +158,17 @@ export default async function PayPage({
           ...entry,
           totalOrderAmount: entry.totalOrderAmount.toString(),
           planTotal: entry.planTotal.toString(),
+          tierBonusAmount: entry.tierBonusAmount.toString(),
+          monthlySalary: entry.monthlySalary.toString(),
+          commissionAmount: entry.commissionAmount.toString(),
+          cancellationDeduction: entry.cancellationDeduction.toString(),
+          cancellationNote: entry.cancellationNote ?? null,
           adjustment: entry.adjustment.toString(),
           finalAmount: entry.finalAmount.toString(),
           reviewedAt: entry.reviewedAt?.toISOString() ?? null,
           payPlan: entry.payPlan
             ? {
+                salary: entry.payPlan.salary.toString(),
                 lineItems: entry.payPlan.lineItems.map((item) => ({
                   ...item,
                   amount: item.amount.toString(),
@@ -151,6 +179,7 @@ export default async function PayPage({
       }
       month={month}
       year={year}
+      salesReps={ledgerSalesReps}
     />
   );
 

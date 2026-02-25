@@ -5,32 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
-
-async function getCustomerData(customerId: string) {
-  const [orders, pendingDocuments, unreadMessages] = await Promise.all([
-    prisma.order.findMany({
-      where: { customerId },
-      include: { currentStage: true },
-      orderBy: { createdAt: "desc" },
-      take: 5,
-    }),
-    prisma.document.count({
-      where: {
-        order: { customerId },
-        status: { in: ["SENT", "VIEWED"] },
-      },
-    }),
-    prisma.message.count({
-      where: {
-        order: { customerId },
-        isInternal: false,
-        isRead: false,
-      },
-    }),
-  ]);
-
-  return { orders, pendingDocuments, unreadMessages };
-}
+import { getOrdersByCustomerEmail } from "@/lib/order-process";
 
 export default async function PortalPage() {
   const session = await auth();
@@ -43,7 +18,25 @@ export default async function PortalPage() {
     redirect("/dashboard");
   }
 
-  const { orders, pendingDocuments, unreadMessages } = await getCustomerData(session.user.id);
+  // Fetch orders from Order Process by customer email
+  const orders = await getOrdersByCustomerEmail(session.user.email, 5);
+
+  // BBD-specific counts (documents and messages still use Prisma)
+  const [pendingDocuments, unreadMessages] = await Promise.all([
+    prisma.document.count({
+      where: {
+        order: { customerId: session.user.id },
+        status: { in: ["SENT", "VIEWED"] },
+      },
+    }).catch(() => 0),
+    prisma.message.count({
+      where: {
+        order: { customerId: session.user.id },
+        isInternal: false,
+        isRead: false,
+      },
+    }).catch(() => 0),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -55,18 +48,7 @@ export default async function PortalPage() {
       </div>
 
       {/* Quick stats */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Active Orders</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {orders.filter((o) => o.status === "ACTIVE").length}
-            </div>
-          </CardContent>
-        </Card>
-
+      <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Documents to Sign</CardTitle>
@@ -89,7 +71,7 @@ export default async function PortalPage() {
         </Card>
       </div>
 
-      {/* Recent orders */}
+      {/* Recent orders from Order Process */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -125,18 +107,16 @@ export default async function PortalPage() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="font-medium">{formatCurrency(order.totalPrice.toString())}</p>
-                    {order.currentStage && (
-                      <Badge
-                        variant="outline"
-                        style={{
-                          borderColor: order.currentStage.color,
-                          color: order.currentStage.color,
-                        }}
-                      >
-                        {order.currentStage.name}
-                      </Badge>
-                    )}
+                    <p className="font-medium">{formatCurrency(order.totalPrice)}</p>
+                    <Badge
+                      variant="outline"
+                      style={{
+                        borderColor: order.currentStage.color,
+                        color: order.currentStage.color,
+                      }}
+                    >
+                      {order.currentStage.name}
+                    </Badge>
                   </div>
                 </Link>
               ))}

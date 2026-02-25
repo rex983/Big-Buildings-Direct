@@ -19,6 +19,7 @@ interface OfficeTierEditorProps {
   year: number;
   initialTiers: Tier[];
   canEdit: boolean;
+  onTiersSaved?: (tiers: Tier[]) => void;
 }
 
 export function OfficeTierEditor({
@@ -27,6 +28,7 @@ export function OfficeTierEditor({
   year,
   initialTiers,
   canEdit,
+  onTiersSaved,
 }: OfficeTierEditorProps) {
   const [tiers, setTiers] = React.useState<Tier[]>(initialTiers);
   const [saving, setSaving] = React.useState(false);
@@ -92,6 +94,16 @@ export function OfficeTierEditor({
       if (data.success) {
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
+        // Notify parent with the current tier values so sibling components update
+        const savedTiers = tiers
+          .filter((t) => t.minValue !== "" && t.bonusAmount !== "")
+          .map((t) => ({
+            ...t,
+            minValue: String(parseFloat(t.minValue) || 0),
+            maxValue: t.maxValue === "" ? "" : String(parseFloat(t.maxValue) || 0),
+            bonusAmount: String(parseFloat(t.bonusAmount) || 0),
+          }));
+        onTiersSaved?.(savedTiers);
       }
     } catch (error) {
       console.error("Failed to save office pay plan:", error);

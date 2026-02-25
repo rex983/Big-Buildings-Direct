@@ -33,25 +33,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Get revisions with related order data for state aggregation
-    const revisions = await prisma.revision.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        newOrderTotal: true,
-        salesRepId: true,
-        newManufacturer: true,
-        originalManufacturer: true,
-        order: {
-          select: {
-            deliveryState: true,
-          },
-        },
-      },
+    // Aggregate by sales rep using groupBy
+    const salesRepAgg = await prisma.revision.groupBy({
+      by: ["salesRepId"],
+      where: { ...whereClause, salesRepId: { not: null } },
+      _count: { id: true },
+      _sum: { newOrderTotal: true },
     });
 
-    // Get sales rep names
-    const salesRepIds = [...new Set(revisions.map((r) => r.salesRepId).filter((id): id is string => id !== null))];
+    // Fetch sales rep names for the grouped IDs
+    const salesRepIds = salesRepAgg
+      .map((r) => r.salesRepId)
+      .filter((id): id is string => id !== null);
     const salesReps = salesRepIds.length > 0
       ? await prisma.user.findMany({
           where: { id: { in: salesRepIds } },
@@ -60,46 +53,56 @@ export async function GET(request: NextRequest) {
       : [];
     const salesRepMap = new Map(salesReps.map((u) => [u.id, `${u.firstName} ${u.lastName}`]));
 
-    // Aggregate by Sales Rep
-    const salesRepAgg = new Map<string, { name: string; quantity: number; totalAmount: number }>();
-    revisions.forEach((rev) => {
-      if (rev.salesRepId && salesRepMap.has(rev.salesRepId)) {
-        const name = salesRepMap.get(rev.salesRepId)!;
-        const existing = salesRepAgg.get(rev.salesRepId) || { name, quantity: 0, totalAmount: 0 };
-        existing.quantity += 1;
-        existing.totalAmount += rev.newOrderTotal?.toNumber() || 0;
-        salesRepAgg.set(rev.salesRepId, existing);
-      }
+    const salesRepData = salesRepAgg
+      .filter((r) => r.salesRepId && salesRepMap.has(r.salesRepId))
+      .map((r) => ({
+        name: salesRepMap.get(r.salesRepId!)!,
+        quantity: r._count.id,
+        totalAmount: r._sum.newOrderTotal?.toNumber() || 0,
+      }))
+      .sort((a, b) => b.totalAmount - a.totalAmount);
+
+    // Aggregate by state — need to go through order relation, so use a lightweight fetch
+    // (Prisma groupBy doesn't support grouping by relation fields)
+    const stateRevisions = await prisma.revision.findMany({
+      where: whereClause,
+      select: {
+        newOrderTotal: true,
+        order: { select: { deliveryState: true } },
+      },
     });
 
-    // Aggregate by State (from related order)
-    const stateAgg = new Map<string, { state: string; quantity: number; totalAmount: number }>();
-    revisions.forEach((rev) => {
-      const state = rev.order?.deliveryState?.toUpperCase();
-      if (state) {
-        const existing = stateAgg.get(state) || { state, quantity: 0, totalAmount: 0 };
-        existing.quantity += 1;
-        existing.totalAmount += rev.newOrderTotal?.toNumber() || 0;
-        stateAgg.set(state, existing);
-      }
+    const stateMap = new Map<string, { state: string; quantity: number; totalAmount: number }>();
+    for (const rev of stateRevisions) {
+      const state = rev.order?.deliveryState;
+      if (!state) continue;
+      const existing = stateMap.get(state) || { state, quantity: 0, totalAmount: 0 };
+      existing.quantity += 1;
+      existing.totalAmount += rev.newOrderTotal?.toNumber() || 0;
+      stateMap.set(state, existing);
+    }
+    const stateData = Array.from(stateMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+
+    // Aggregate by manufacturer — also needs relation/coalesce logic, use lightweight fetch
+    const mfrRevisions = await prisma.revision.findMany({
+      where: whereClause,
+      select: {
+        newOrderTotal: true,
+        newManufacturer: true,
+        originalManufacturer: true,
+      },
     });
 
-    // Aggregate by Manufacturer (use newManufacturer if available, else originalManufacturer)
-    const manufacturerAgg = new Map<string, { manufacturer: string; quantity: number; totalAmount: number }>();
-    revisions.forEach((rev) => {
+    const mfrMap = new Map<string, { manufacturer: string; quantity: number; totalAmount: number }>();
+    for (const rev of mfrRevisions) {
       const manufacturer = rev.newManufacturer || rev.originalManufacturer;
-      if (manufacturer) {
-        const existing = manufacturerAgg.get(manufacturer) || { manufacturer, quantity: 0, totalAmount: 0 };
-        existing.quantity += 1;
-        existing.totalAmount += rev.newOrderTotal?.toNumber() || 0;
-        manufacturerAgg.set(manufacturer, existing);
-      }
-    });
-
-    // Convert to sorted arrays
-    const salesRepData = Array.from(salesRepAgg.values()).sort((a, b) => b.totalAmount - a.totalAmount);
-    const stateData = Array.from(stateAgg.values()).sort((a, b) => b.totalAmount - a.totalAmount);
-    const manufacturerData = Array.from(manufacturerAgg.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+      if (!manufacturer) continue;
+      const existing = mfrMap.get(manufacturer) || { manufacturer, quantity: 0, totalAmount: 0 };
+      existing.quantity += 1;
+      existing.totalAmount += rev.newOrderTotal?.toNumber() || 0;
+      mfrMap.set(manufacturer, existing);
+    }
+    const manufacturerData = Array.from(mfrMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
 
     return NextResponse.json({
       success: true,

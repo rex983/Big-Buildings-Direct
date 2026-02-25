@@ -8,6 +8,8 @@ import { createPayAuditLog } from "@/lib/queries/pay";
 const patchSchema = z.object({
   adjustment: z.union([z.number(), z.string()]).optional(),
   adjustmentNote: z.string().optional(),
+  cancellationDeduction: z.union([z.number(), z.string()]).optional(),
+  cancellationNote: z.string().optional(),
   notes: z.string().optional(),
   status: z.enum(["PENDING", "REVIEWED", "APPROVED"]).optional(),
 });
@@ -32,7 +34,7 @@ export async function PATCH(
       );
     }
 
-    const { adjustment, adjustmentNote, notes, status } = validation.data;
+    const { adjustment, adjustmentNote, cancellationDeduction, cancellationNote, notes, status } = validation.data;
 
     // Fetch existing entry
     const existing = await prisma.payLedger.findUnique({
@@ -53,15 +55,34 @@ export async function PATCH(
       updateData.adjustmentNote = adjustmentNote;
     }
 
+    if (cancellationNote !== undefined) {
+      updateData.cancellationNote = cancellationNote;
+    }
+
     if (notes !== undefined) {
       updateData.notes = notes;
     }
 
-    // Handle adjustment change -> recalculate finalAmount
+    // Handle cancellation deduction change
+    if (cancellationDeduction !== undefined) {
+      updateData.cancellationDeduction = new Prisma.Decimal(String(cancellationDeduction));
+    }
+
+    // Handle adjustment change
     if (adjustment !== undefined) {
-      const newAdjustment = new Prisma.Decimal(String(adjustment));
-      updateData.adjustment = newAdjustment;
-      updateData.finalAmount = existing.planTotal.add(newAdjustment);
+      updateData.adjustment = new Prisma.Decimal(String(adjustment));
+    }
+
+    // Recalculate finalAmount if adjustment or cancellationDeduction changed
+    if (adjustment !== undefined || cancellationDeduction !== undefined) {
+      const newAdjustment = adjustment !== undefined
+        ? new Prisma.Decimal(String(adjustment))
+        : existing.adjustment;
+      const newCancellation = cancellationDeduction !== undefined
+        ? new Prisma.Decimal(String(cancellationDeduction))
+        : existing.cancellationDeduction;
+      // finalAmount = planTotal - cancellationDeduction + adjustment
+      updateData.finalAmount = existing.planTotal.sub(newCancellation).add(newAdjustment);
     }
 
     // Handle status transitions
@@ -106,8 +127,10 @@ export async function PATCH(
     const repName = `${updated.salesRep.firstName} ${updated.salesRep.lastName}`;
     const changes: string[] = [];
     if (adjustment !== undefined) changes.push(`adjustment=$${adjustment}`);
+    if (cancellationDeduction !== undefined) changes.push(`cancellation=$${cancellationDeduction}`);
     if (status !== undefined) changes.push(`status=${status}`);
     if (adjustmentNote !== undefined) changes.push("adjustmentNote updated");
+    if (cancellationNote !== undefined) changes.push("cancellationNote updated");
     if (notes !== undefined) changes.push("notes updated");
 
     await createPayAuditLog(user.id, "LEDGER_ADJUSTED", `Updated ledger for ${repName} (${existing.month}/${existing.year}): ${changes.join(", ")}`, {
@@ -116,7 +139,7 @@ export async function PATCH(
       repName,
       month: existing.month,
       year: existing.year,
-      changes: { adjustment, adjustmentNote, notes, status },
+      changes: { adjustment, adjustmentNote, cancellationDeduction, cancellationNote, notes, status },
     });
 
     return NextResponse.json({ success: true, data: updated });

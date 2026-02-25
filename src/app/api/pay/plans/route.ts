@@ -56,6 +56,7 @@ const upsertPlanSchema = z.object({
   month: z.number().int().min(1).max(12),
   year: z.number().int().min(2000),
   salary: z.union([z.number(), z.string()]).transform((v) => String(v)).optional(),
+  cancellationDeduction: z.union([z.number(), z.string()]).transform((v) => String(v)).optional(),
   lineItems: z.array(lineItemSchema).optional().default([]),
 });
 
@@ -74,7 +75,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { salesRepId, month, year, lineItems, salary } = validation.data;
+    const { salesRepId, month, year, lineItems, salary, cancellationDeduction } = validation.data;
 
     // Verify sales rep exists
     const salesRep = await prisma.user.findUnique({
@@ -98,6 +99,7 @@ export async function PUT(request: NextRequest) {
         update: {
           createdById: user.id,
           ...(salary !== undefined ? { salary } : {}),
+          ...(cancellationDeduction !== undefined ? { cancellationDeduction } : {}),
         },
         create: {
           month,
@@ -105,6 +107,7 @@ export async function PUT(request: NextRequest) {
           salesRepId,
           createdById: user.id,
           salary: salary ?? "0",
+          cancellationDeduction: cancellationDeduction ?? "0",
         },
       });
 
@@ -146,6 +149,15 @@ export async function PUT(request: NextRequest) {
         salesRepId,
         repName,
         salary,
+        month,
+        year,
+      });
+    }
+    if (cancellationDeduction !== undefined) {
+      await createPayAuditLog(user.id, "CANCELLATION_UPDATED", `Updated cancellation deduction for ${repName} to $${cancellationDeduction} (${month}/${year})`, {
+        salesRepId,
+        repName,
+        cancellationDeduction,
         month,
         year,
       });

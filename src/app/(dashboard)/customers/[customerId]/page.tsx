@@ -132,13 +132,6 @@ const timelineIcons: Record<TimelineEvent["type"], string> = {
   cancellation: "❌",
 };
 
-const statusColors: Record<string, string> = {
-  ACTIVE: "info",
-  COMPLETED: "success",
-  CANCELLED: "destructive",
-  ON_HOLD: "warning",
-};
-
 export default async function CustomerDetailPage({
   params,
 }: {
@@ -160,11 +153,8 @@ export default async function CustomerDetailPage({
     (sum, o) => sum + Number(o.totalPrice),
     0
   );
-  const activeOrders = orders.filter(
-    (o) => o.status === "ACTIVE"
-  ).length;
-  const completedOrders = orders.filter(
-    (o) => o.status === "COMPLETED" || o.sentToManufacturer
+  const sentToMfr = orders.filter(
+    (o) => o.sentToManufacturer
   ).length;
 
   return (
@@ -191,7 +181,7 @@ export default async function CustomerDetailPage({
       </div>
 
       {/* Stats Row */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <CardContent className="pt-6">
             <p className="text-sm text-muted-foreground">Total Orders</p>
@@ -206,14 +196,8 @@ export default async function CustomerDetailPage({
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Active Orders</p>
-            <p className="text-2xl font-bold">{activeOrders}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <p className="text-sm text-muted-foreground">Completed / Installed</p>
-            <p className="text-2xl font-bold">{completedOrders}</p>
+            <p className="text-sm text-muted-foreground">Sent to Manufacturer</p>
+            <p className="text-2xl font-bold">{sentToMfr}</p>
           </CardContent>
         </Card>
       </div>
@@ -274,7 +258,6 @@ export default async function CustomerDetailPage({
                 <TableRow>
                   <TableHead>Order #</TableHead>
                   <TableHead>Building</TableHead>
-                  <TableHead>Status</TableHead>
                   <TableHead>Stage</TableHead>
                   <TableHead>Value</TableHead>
                   <TableHead>Date Sold</TableHead>
@@ -298,11 +281,6 @@ export default async function CustomerDetailPage({
                           {order.buildingSize}
                         </span>
                       )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusColors[order.status] as "default"}>
-                        {order.status}
-                      </Badge>
                     </TableCell>
                     <TableCell>
                       {order.currentStage ? (

@@ -8,6 +8,7 @@ const protectedRoutes = [
   "/customers",
   "/communications",
   "/team",
+  "/pay",
   "/settings",
   "/portal",
   "/my-orders",
@@ -20,10 +21,44 @@ const publicRoutes = ["/login", "/register", "/forgot-password", "/reset-passwor
 // Routes accessible without auth
 const publicAccessRoutes = ["/sign"];
 
+// API routes that should never be intercepted by test mode
+const testModeBypassRoutes = [
+  "/api/auth",
+  "/api/webhooks",
+];
+
+const MUTATING_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
+
 export default auth((req) => {
   const { nextUrl } = req;
   const isLoggedIn = !!req.auth;
   const pathname = nextUrl.pathname;
+  const method = req.method;
+
+  // ── Test Mode: intercept mutating API requests ──
+  if (
+    pathname.startsWith("/api/") &&
+    MUTATING_METHODS.includes(method) &&
+    !testModeBypassRoutes.some((route) => pathname.startsWith(route))
+  ) {
+    const testModeCookie = req.cookies.get("bbd-test-mode")?.value;
+    if (testModeCookie === "true") {
+      return NextResponse.json(
+        {
+          success: true,
+          testMode: true,
+          message: "Test mode: action simulated, no data was changed.",
+          data: {},
+        },
+        { status: 200 }
+      );
+    }
+  }
+
+  // ── Non-API routes: existing auth logic ──
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.next();
+  }
 
   // Allow public access routes (like document signing)
   if (publicAccessRoutes.some((route) => pathname.startsWith(route))) {
@@ -47,5 +82,8 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: [
+    // Match all routes except static assets
+    "/((?!_next/static|_next/image|favicon.ico).*)",
+  ],
 };
