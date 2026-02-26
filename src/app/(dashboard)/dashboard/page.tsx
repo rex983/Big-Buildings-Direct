@@ -31,7 +31,7 @@ export default async function DashboardPage({
   // Statuses are managed by Order Processing — read-only in BBD
   const canEdit = false;
   const isTeamView = isAdminUser || canViewAll;
-  const orderProcessingUrl = process.env.NEXT_PUBLIC_ORDER_PROCESSING_URL;
+  const orderProcessingUrl = process.env.NEXT_PUBLIC_ORDER_PROCESSING_URL || "https://big-buildings-direct-mj5l.vercel.app";
 
   // Determine filter scope:
   // - Admin: sees all orders (no filter)
