@@ -103,12 +103,12 @@ export default async function OrdersPage({
                     <TableHead>Order #</TableHead>
                     <TableHead>Customer</TableHead>
                     <TableHead>Building</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
                     <TableHead className="text-right">Deposit</TableHead>
                     <TableHead className="text-center">Payment</TableHead>
                     <TableHead className="text-center">Sent to Customer</TableHead>
                     <TableHead className="text-center">Signed</TableHead>
                     <TableHead className="text-center">Sent to Mfr</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -140,6 +140,7 @@ export default async function OrdersPage({
                           </p>
                         </div>
                       </TableCell>
+                      <TableCell className="text-right font-medium">{formatCurrency(order.totalPrice)}</TableCell>
                       <TableCell className="text-right font-medium">
                         {formatCurrency(order.depositAmount)}
                       </TableCell>
@@ -200,7 +201,6 @@ export default async function OrdersPage({
                           label="Sent to Manufacturer"
                         />
                       </TableCell>
-                      <TableCell className="text-right font-medium">{formatCurrency(order.totalPrice)}</TableCell>
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       <TableCell>
                         <Link href={`/orders/${order.id}`}>
