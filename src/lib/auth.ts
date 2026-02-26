@@ -64,6 +64,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           roleId: user.roleId,
           roleName: user.role.name,
           permissions: user.role.permissions.map((rp) => rp.permission.name),
+          office: user.office || undefined,
         };
       },
     }),
@@ -78,6 +79,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.roleId = (user as SessionUser).roleId;
         token.roleName = (user as SessionUser).roleName;
         token.permissions = (user as SessionUser).permissions;
+        token.office = (user as SessionUser).office;
       }
 
       // Handle session updates (for impersonation)
@@ -94,6 +96,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               roleId: token.roleId as string,
               roleName: token.roleName as string,
               permissions: token.permissions as string[],
+              office: token.office as string | undefined,
             };
           }
 
@@ -106,6 +109,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.roleId = impersonated.roleId;
           token.roleName = impersonated.roleName;
           token.permissions = impersonated.permissions;
+          token.office = impersonated.office;
           token.impersonatingAs = impersonated;
         }
 
@@ -119,6 +123,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.roleId = original.roleId;
           token.roleName = original.roleName;
           token.permissions = original.permissions;
+          token.office = original.office;
           token.originalUser = undefined;
           token.impersonatingAs = undefined;
         }
@@ -136,6 +141,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         roleId: token.roleId as string,
         roleName: token.roleName as string,
         permissions: token.permissions as string[],
+        office: token.office as string | undefined,
         originalUser: token.originalUser as BaseSessionUser | undefined,
         impersonatingAs: token.impersonatingAs as BaseSessionUser | undefined,
       } as SessionUser & { emailVerified: Date | null };
@@ -151,7 +157,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 });
 
 // Helper function to check permissions
-export function hasPermission(
+function hasPermission(
   permissions: string[],
   required: string | string[]
 ): boolean {
@@ -165,7 +171,7 @@ export function isAdmin(roleName: string): boolean {
 }
 
 // Helper to get current session on server
-export async function getCurrentUser(): Promise<SessionUser | null> {
+async function getCurrentUser(): Promise<SessionUser | null> {
   const session = await auth();
   return session?.user ?? null;
 }

@@ -273,47 +273,88 @@ async function main() {
     });
   }
 
-  // Create admin user
-  console.log("Creating admin user...");
+  // Create all users from Order Processing app profiles
+  console.log("Creating users...");
   const hashedPassword = await bcrypt.hash("admin123", 12);
 
-  await prisma.user.upsert({
-    where: { email: "admin@bigbuildingsdirect.com" },
-    update: {},
-    create: {
-      email: "admin@bigbuildingsdirect.com",
-      password: hashedPassword,
-      firstName: "Admin",
-      lastName: "User",
-      roleId: adminRole.id,
-    },
-  });
+  const roleMap: Record<string, string> = {
+    admin: adminRole.id,
+    manager: managerRole.id,
+    sales_rep: salesRole.id,
+  };
 
-  // Create demo sales rep
-  await prisma.user.upsert({
-    where: { email: "sales@bigbuildingsdirect.com" },
-    update: {},
-    create: {
-      email: "sales@bigbuildingsdirect.com",
-      password: hashedPassword,
-      firstName: "John",
-      lastName: "Sales",
-      roleId: salesRole.id,
-    },
-  });
+  const officeMap: Record<string, string> = {
+    Marion: "Marion Office",
+    Harbor: "Harbor Office",
+  };
 
-  // Create demo customer
-  await prisma.user.upsert({
-    where: { email: "customer@example.com" },
-    update: {},
-    create: {
-      email: "customer@example.com",
-      password: hashedPassword,
-      firstName: "Jane",
-      lastName: "Customer",
-      roleId: customerRole.id,
-    },
-  });
+  // All profiles from Order Processing Supabase (source of truth)
+  const opProfiles = [
+    // Admin
+    { email: "rex@bigbuildingsdirect.com", firstName: "Rex", lastName: "Wu", role: "admin", office: "All" },
+    // Managers
+    { email: "garrett@bigbuildingsdirect.com", firstName: "Garrett", lastName: "Ryder", role: "manager", office: "Harbor" },
+    { email: "kelvin@bigbuildingsdirect.com", firstName: "Kelvin", lastName: "Soto", role: "manager", office: "Harbor" },
+    { email: "robin@bigbuildingsdirect.com", firstName: "Robin", lastName: "Campbell", role: "manager", office: "Marion" },
+    // Sales Reps — Harbor Office
+    { email: "t.woodmansee@bigbuildingsdirect.com", firstName: "Tom", lastName: "Woodmansee", role: "sales_rep", office: "Harbor" },
+    { email: "k.occe@bigbuildingsdirect.com", firstName: "Kayani", lastName: "Occe", role: "sales_rep", office: "Harbor" },
+    { email: "y.pandit@bigbuildingsdirect.com", firstName: "Yesha", lastName: "Pandit", role: "sales_rep", office: "Harbor" },
+    { email: "reed@bigbuildingsdirect.com", firstName: "Reed", lastName: "Hunt", role: "sales_rep", office: "Harbor" },
+    { email: "m.wright@bigbuildingsdirect.com", firstName: "Max", lastName: "Wright", role: "sales_rep", office: "Harbor" },
+    { email: "e.quesada@bigbuildingsdirect.com", firstName: "Emily", lastName: "Quesada", role: "sales_rep", office: "Harbor" },
+    { email: "a.chase@bigbuildingsdirect.com", firstName: "Alyssa", lastName: "Chase", role: "sales_rep", office: "Harbor" },
+    { email: "tucker@bigbuildingsdirect.com", firstName: "Tucker", lastName: "Fine", role: "sales_rep", office: "Harbor" },
+    { email: "salita@bigbuildingsdirect.com", firstName: "Salita", lastName: "Bengochea", role: "sales_rep", office: "Harbor" },
+    { email: "t.simpson@bigbuildingsdirect.com", firstName: "Ty", lastName: "Simpson", role: "sales_rep", office: "Harbor" },
+    { email: "d.rodriguez@bigbuildingsdirect.com", firstName: "Dariel", lastName: "Rodriguez", role: "sales_rep", office: "Harbor" },
+    { email: "j.mayers@bigbuildingsdirect.com", firstName: "Jakari", lastName: "Mayers", role: "sales_rep", office: "Harbor" },
+    { email: "c.wade@bigbuildingsdirect.com", firstName: "Cayman", lastName: "Wade", role: "sales_rep", office: "Harbor" },
+    { email: "e.smeltzer@bigbuildingsdirect.com", firstName: "Evan", lastName: "Smeltzer", role: "sales_rep", office: "Harbor" },
+    { email: "c.murphy@bigbuildingsdirect.com", firstName: "Chase", lastName: "Murphy", role: "sales_rep", office: "Harbor" },
+    { email: "t.hughes@bigbuildingsdirect.com", firstName: "Tyler", lastName: "Hughes", role: "sales_rep", office: "Harbor" },
+    { email: "d.schmidt@bigbuildingsdirect.com", firstName: "Dylan", lastName: "Schmidt", role: "sales_rep", office: "Harbor" },
+    { email: "s.farabaugh@bigbuildingsdirect.com", firstName: "Samantha", lastName: "Farabaugh", role: "sales_rep", office: "Harbor" },
+    { email: "r.cavallo@bigbuildingsdirect.com", firstName: "Ray", lastName: "Cavallo", role: "sales_rep", office: "Harbor" },
+    { email: "l.arasimowicz@bigbuildingsdirect.com", firstName: "Liliana", lastName: "Arasimowicz", role: "sales_rep", office: "Harbor" },
+    { email: "gabe@bigbuildingsdirect.com", firstName: "Gabriel", lastName: "DeAlba", role: "sales_rep", office: "Harbor" },
+    { email: "j.lemon@bigbuildingsdirect.com", firstName: "Jordan", lastName: "Lemon", role: "sales_rep", office: "Harbor" },
+    { email: "a.blust@bigbuildingsdirect.com", firstName: "Aidan", lastName: "Blust", role: "sales_rep", office: "Harbor" },
+    { email: "jason@bigbuildingsdirect.com", firstName: "Jason", lastName: "Porcelli", role: "sales_rep", office: "Harbor" },
+    { email: "r.lopez@bigbuildingsdirect.com", firstName: "Rob", lastName: "Lopez", role: "sales_rep", office: "Harbor" },
+    { email: "n.deboe@bigbuildingsdirect.com", firstName: "Nicholas", lastName: "Deboe", role: "sales_rep", office: "Harbor" },
+    // Sales Reps — Marion Office
+    { email: "adam@bigbuildingsdirect.com", firstName: "Adam", lastName: "Niemann", role: "sales_rep", office: "Marion" },
+    { email: "bill@bigbuildingsdirect.com", firstName: "Bill", lastName: "Alexander", role: "sales_rep", office: "Marion" },
+    { email: "nick@bigbuildingsdirect.com", firstName: "Nick", lastName: "Brunsman", role: "sales_rep", office: "Marion" },
+    { email: "richard@bigbuildingsdirect.com", firstName: "Richard", lastName: "Kalley", role: "sales_rep", office: "Marion" },
+    { email: "samantha@bigbuildingsdirect.com", firstName: "Samantha", lastName: "Napoli", role: "sales_rep", office: "Marion" },
+    { email: "rob@bigbuildingsdirect.com", firstName: "Rob", lastName: "Salaita", role: "sales_rep", office: "Marion" },
+    { email: "timothy@bigbuildingsdirect.com", firstName: "Timothy", lastName: "Hickman", role: "sales_rep", office: "Marion" },
+  ];
+
+  for (const profile of opProfiles) {
+    await prisma.user.upsert({
+      where: { email: profile.email },
+      update: {
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        password: hashedPassword,
+        roleId: roleMap[profile.role],
+        office: officeMap[profile.office] || undefined,
+      },
+      create: {
+        email: profile.email,
+        password: hashedPassword,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        roleId: roleMap[profile.role],
+        office: officeMap[profile.office] || undefined,
+      },
+    });
+  }
+
+  console.log(`  Created/updated ${opProfiles.length} users`);
 
   console.log("Seed completed successfully!");
 }

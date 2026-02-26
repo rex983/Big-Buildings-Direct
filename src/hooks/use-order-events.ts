@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { supabaseClient } from "@/lib/supabase-client";
-import type { RealtimePostgresInsertPayload } from "@supabase/supabase-js";
 
 export interface OrderEvent {
   id: string;
@@ -16,17 +15,7 @@ export interface OrderEvent {
 }
 
 export function useOrderEvents(orderId: string) {
-  const [events, setEvents] = useState<OrderEvent[]>([]);
   const [latestEvent, setLatestEvent] = useState<OrderEvent | null>(null);
-
-  const handleInsert = useCallback(
-    (payload: RealtimePostgresInsertPayload<OrderEvent>) => {
-      const newEvent = payload.new;
-      setEvents((prev) => [newEvent, ...prev]);
-      setLatestEvent(newEvent);
-    },
-    []
-  );
 
   useEffect(() => {
     const channel = supabaseClient
@@ -41,11 +30,8 @@ export function useOrderEvents(orderId: string) {
         },
         (payload) => {
           const newEvent = payload.new as OrderEvent;
-          // Only process events from the Python order processor
           if (newEvent.source === "order_processor") {
-            handleInsert(
-              payload as RealtimePostgresInsertPayload<OrderEvent>
-            );
+            setLatestEvent(newEvent);
           }
         }
       )
@@ -54,7 +40,7 @@ export function useOrderEvents(orderId: string) {
     return () => {
       supabaseClient.removeChannel(channel);
     };
-  }, [orderId, handleInsert]);
+  }, [orderId]);
 
-  return { events, latestEvent };
+  return { latestEvent };
 }

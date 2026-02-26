@@ -1,47 +1,4 @@
-import type {
-  User,
-  Role,
-  Permission,
-  Order,
-  OrderStage,
-  OrderActivity,
-  File,
-  Document,
-  Message,
-  Email,
-} from "@prisma/client";
-
-// Re-export Prisma types
-export type {
-  User,
-  Role,
-  Permission,
-  Order,
-  OrderStage,
-  OrderActivity,
-  File,
-  Document,
-  Message,
-  Email,
-};
-
-// Enum-like constants (SQLite compatible)
-export const OrderStatus = {
-  ACTIVE: "ACTIVE",
-  COMPLETED: "COMPLETED",
-  CANCELLED: "CANCELLED",
-  ON_HOLD: "ON_HOLD",
-} as const;
-export type OrderStatus = (typeof OrderStatus)[keyof typeof OrderStatus];
-
-export const OrderPriority = {
-  LOW: "LOW",
-  NORMAL: "NORMAL",
-  HIGH: "HIGH",
-  URGENT: "URGENT",
-} as const;
-export type OrderPriority = (typeof OrderPriority)[keyof typeof OrderPriority];
-
+// Enum-like constants
 export const ActivityType = {
   ORDER_CREATED: "ORDER_CREATED",
   ORDER_UPDATED: "ORDER_UPDATED",
@@ -72,85 +29,7 @@ export const DepositChargeStatus = {
 } as const;
 export type DepositChargeStatus = (typeof DepositChargeStatus)[keyof typeof DepositChargeStatus];
 
-export const FileCategory = {
-  CONTRACT: "CONTRACT",
-  INVOICE: "INVOICE",
-  BLUEPRINT: "BLUEPRINT",
-  PHOTO: "PHOTO",
-  PERMIT: "PERMIT",
-  OTHER: "OTHER",
-} as const;
-export type FileCategory = (typeof FileCategory)[keyof typeof FileCategory];
-
-export const DocumentStatus = {
-  DRAFT: "DRAFT",
-  SENT: "SENT",
-  VIEWED: "VIEWED",
-  SIGNED: "SIGNED",
-  EXPIRED: "EXPIRED",
-} as const;
-export type DocumentStatus = (typeof DocumentStatus)[keyof typeof DocumentStatus];
-
-export const EmailStatus = {
-  QUEUED: "QUEUED",
-  SENT: "SENT",
-  DELIVERED: "DELIVERED",
-  OPENED: "OPENED",
-  FAILED: "FAILED",
-  BOUNCED: "BOUNCED",
-} as const;
-export type EmailStatus = (typeof EmailStatus)[keyof typeof EmailStatus];
-
-export const EmailDirection = {
-  INBOUND: "INBOUND",
-  OUTBOUND: "OUTBOUND",
-} as const;
-export type EmailDirection = (typeof EmailDirection)[keyof typeof EmailDirection];
-
-// Extended types with relations
-export type UserWithRole = User & {
-  role: Role & {
-    permissions: { permission: Permission }[];
-  };
-};
-
-export type OrderWithRelations = Order & {
-  customer?: User | null;
-  salesRep?: User | null;
-  currentStage?: OrderStage | null;
-};
-
-export type OrderWithFullRelations = Order & {
-  customer?: User | null;
-  salesRep?: User | null;
-  currentStage?: OrderStage | null;
-  stageHistory: (OrderStageHistory & { stage: OrderStage })[];
-  activities: OrderActivity[];
-  files: { file: File }[];
-  documents: Document[];
-  messages: Message[];
-};
-
-export type OrderStageHistory = {
-  id: string;
-  notes: string | null;
-  createdAt: Date;
-  orderId: string;
-  stageId: string;
-  changedById: string | null;
-  stage: OrderStage;
-};
-
-export type MessageWithSender = Message & {
-  sender: Pick<User, "id" | "firstName" | "lastName" | "avatar">;
-};
-
-export type DocumentWithFile = Document & {
-  file: File;
-  createdBy: Pick<User, "id" | "firstName" | "lastName">;
-};
-
-// Base session user without impersonation (to avoid circular reference)
+// Session types
 export type BaseSessionUser = {
   id: string;
   email: string;
@@ -159,75 +38,15 @@ export type BaseSessionUser = {
   roleId: string;
   roleName: string;
   permissions: string[];
+  office?: string;
 };
 
-// Session types
 export type SessionUser = BaseSessionUser & {
-  impersonatingAs?: BaseSessionUser;  // The user being impersonated
-  originalUser?: BaseSessionUser;     // The actual admin (preserved during impersonation)
+  impersonatingAs?: BaseSessionUser;
+  originalUser?: BaseSessionUser;
 };
 
-// API Response types
-export type ApiResponse<T = unknown> = {
-  success: boolean;
-  data?: T;
-  error?: string;
-  message?: string;
-};
-
-export type PaginatedResponse<T> = ApiResponse<{
-  items: T[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-}>;
-
-// Form types
-export type OrderFormData = {
-  customerName: string;
-  customerEmail: string;
-  customerPhone?: string;
-  buildingType: string;
-  buildingSize: string;
-  buildingColor?: string;
-  buildingOptions?: Record<string, unknown>;
-  deliveryAddress: string;
-  deliveryCity: string;
-  deliveryState: string;
-  deliveryZip: string;
-  deliveryNotes?: string;
-  totalPrice: number;
-  depositAmount: number;
-  salesRepId?: string;
-  customerId?: string;
-};
-
-export type UserFormData = {
-  email: string;
-  password?: string;
-  firstName: string;
-  lastName: string;
-  phone?: string;
-  roleId: string;
-  isActive?: boolean;
-};
-
-// Permission categories
-export const PERMISSION_CATEGORIES = [
-  "Orders",
-  "Users",
-  "Roles",
-  "Files",
-  "Documents",
-  "Communications",
-  "Pay",
-  "Settings",
-] as const;
-
-export type PermissionCategory = (typeof PERMISSION_CATEGORIES)[number];
-
-// Default permissions
+// Default permissions (used by seed scripts)
 export const DEFAULT_PERMISSIONS = [
   // Orders
   { name: "orders.view", category: "Orders", description: "View orders" },

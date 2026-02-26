@@ -3,11 +3,6 @@ import { LocalStorageAdapter } from "./local-adapter";
 import { S3StorageAdapter } from "./s3-adapter";
 import { SupabaseStorageAdapter } from "./supabase-adapter";
 
-export type { StorageAdapter, StorageFile, UploadOptions, UrlOptions } from "./types";
-export { LocalStorageAdapter } from "./local-adapter";
-export { S3StorageAdapter } from "./s3-adapter";
-export { SupabaseStorageAdapter } from "./supabase-adapter";
-
 let storageInstance: StorageAdapter | null = null;
 
 export function getStorage(): StorageAdapter {

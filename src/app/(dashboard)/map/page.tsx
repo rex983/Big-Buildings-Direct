@@ -15,11 +15,11 @@ interface OrderLocation {
   deliveryCity: string;
   deliveryState: string;
   deliveryZip: string;
-  totalPrice: string;
-  installer: string | null;
+  totalPrice: number;
+  installer: string;
   dateSold: string | null;
   sentToManufacturer: boolean;
-  salesRep: { id: string; firstName: string; lastName: string } | null;
+  salesPerson: string;
 }
 
 interface GeoCache {
@@ -37,7 +37,11 @@ const MANUFACTURER_PALETTE = [
 const UNASSIGNED_COLOR = "#6b7280";
 
 async function geocodeAddress(address: string, city: string, state: string, zip: string): Promise<{ lat: number; lng: number } | null> {
-  const query = `${address}, ${city}, ${state} ${zip}`;
+  // Build the best query we can from available fields
+  const parts = [address, city, state, zip].filter(Boolean);
+  if (parts.length === 0) return null;
+
+  const query = parts.join(", ");
   try {
     const res = await fetch(
       `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&countrycodes=us`,
@@ -47,14 +51,32 @@ async function geocodeAddress(address: string, city: string, state: string, zip:
     if (data && data.length > 0) {
       return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
     }
-    const fallbackRes = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(`${city}, ${state} ${zip}`)}&limit=1&countrycodes=us`,
-      { headers: { "User-Agent": "BigBuildingsDirect/1.0" } }
-    );
-    const fallbackData = await fallbackRes.json();
-    if (fallbackData && fallbackData.length > 0) {
-      return { lat: parseFloat(fallbackData[0].lat), lng: parseFloat(fallbackData[0].lon) };
+
+    // Fallback: try city/state/zip only
+    const fallbackParts = [city, state, zip].filter(Boolean);
+    if (fallbackParts.length > 0) {
+      const fallbackRes = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fallbackParts.join(", "))}&limit=1&countrycodes=us`,
+        { headers: { "User-Agent": "BigBuildingsDirect/1.0" } }
+      );
+      const fallbackData = await fallbackRes.json();
+      if (fallbackData && fallbackData.length > 0) {
+        return { lat: parseFloat(fallbackData[0].lat), lng: parseFloat(fallbackData[0].lon) };
+      }
     }
+
+    // Last resort: try state + zip only
+    if (state || zip) {
+      const lastRes = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent([state, zip].filter(Boolean).join(" "))}&limit=1&countrycodes=us`,
+        { headers: { "User-Agent": "BigBuildingsDirect/1.0" } }
+      );
+      const lastData = await lastRes.json();
+      if (lastData && lastData.length > 0) {
+        return { lat: parseFloat(lastData[0].lat), lng: parseFloat(lastData[0].lon) };
+      }
+    }
+
     return null;
   } catch {
     return null;
@@ -72,6 +94,10 @@ function createPinIcon(leaflet: typeof L, color: string) {
     iconAnchor: [12, 36] as [number, number],
     popupAnchor: [0, -36] as [number, number],
   });
+}
+
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0 }).format(amount);
 }
 
 export default function MapPage() {
@@ -100,11 +126,9 @@ export default function MapPage() {
   }, [allOrders]);
 
   const salesReps = useMemo(() => {
-    const map = new Map<string, string>();
-    allOrders.forEach((o) => {
-      if (o.salesRep) map.set(o.salesRep.id, `${o.salesRep.firstName} ${o.salesRep.lastName}`);
-    });
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+    const set = new Set<string>();
+    allOrders.forEach((o) => { if (o.salesPerson) set.add(o.salesPerson); });
+    return Array.from(set).sort();
   }, [allOrders]);
 
   const years = useMemo(() => {
@@ -128,7 +152,7 @@ export default function MapPage() {
   const filteredOrders = useMemo(() => {
     return allOrders.filter((o) => {
       if (filterManufacturer !== "all" && (o.installer || "Unassigned") !== filterManufacturer) return false;
-      if (filterRep !== "all" && (o.salesRep?.id || "none") !== filterRep) return false;
+      if (filterRep !== "all" && o.salesPerson !== filterRep) return false;
       if (filterYear !== "all") {
         if (!o.dateSold) return false;
         if (new Date(o.dateSold).getFullYear().toString() !== filterYear) return false;
@@ -211,6 +235,13 @@ export default function MapPage() {
       for (const order of allOrders) {
         if (cancelled) break;
 
+        // Skip orders with no address data at all
+        if (!order.deliveryAddress && !order.deliveryCity && !order.deliveryState && !order.deliveryZip) {
+          completed++;
+          setGeocodeProgress({ done: completed, total: allOrders.length });
+          continue;
+        }
+
         const addressKey = `${order.deliveryAddress}|${order.deliveryCity}|${order.deliveryState}|${order.deliveryZip}`;
         let coords = geoCache[addressKey];
         let wasCached = coords !== undefined;
@@ -282,13 +313,15 @@ export default function MapPage() {
         icon: createPinIcon(leaflet, color),
       }).addTo(map);
 
-      const rep = order.salesRep
-        ? `${order.salesRep.firstName} ${order.salesRep.lastName}`
-        : "Unassigned";
+      const rep = order.salesPerson || "Unassigned";
 
       const dateSold = order.dateSold
         ? new Date(order.dateSold).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
         : "N/A";
+
+      // Build address line from available fields
+      const addressLine2Parts = [order.deliveryCity, order.deliveryState].filter(Boolean).join(", ");
+      const addressLine2 = addressLine2Parts + (order.deliveryZip ? ` ${order.deliveryZip}` : "");
 
       marker.bindPopup(`
         <div style="min-width: 220px; font-family: system-ui, sans-serif;">
@@ -297,14 +330,14 @@ export default function MapPage() {
           </div>
           <div style="font-size: 13px; color: #374151; margin-bottom: 2px;">${order.customerName}</div>
           <div style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">
-            ${order.deliveryAddress}<br/>
-            ${order.deliveryCity}, ${order.deliveryState} ${order.deliveryZip}
+            ${order.deliveryAddress ? `${order.deliveryAddress}<br/>` : ""}${addressLine2}
           </div>
           <div style="font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px;">
             <span style="background: ${color}; color: white; padding: 1px 6px; border-radius: 4px; font-size: 11px;">${mfr}</span>
           </div>
           ${order.buildingType ? `<div style="font-size: 12px; color: #6b7280;">${order.buildingType} ${order.buildingSize}</div>` : ""}
-          <div style="font-size: 12px; color: #6b7280; margin-top: 2px;">Rep: ${rep}</div>
+          <div style="font-size: 12px; color: #6b7280; margin-top: 2px;">Total: ${formatCurrency(order.totalPrice)}</div>
+          <div style="font-size: 12px; color: #6b7280;">Rep: ${rep}</div>
           <div style="font-size: 12px; color: #6b7280;">Sold: ${dateSold}</div>
         </div>
       `);
@@ -403,8 +436,8 @@ export default function MapPage() {
                   className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
                 >
                   <option value="all">All Reps</option>
-                  {salesReps.map(([id, name]) => (
-                    <option key={id} value={id}>{name}</option>
+                  {salesReps.map((name) => (
+                    <option key={name} value={name}>{name}</option>
                   ))}
                 </select>
               </div>

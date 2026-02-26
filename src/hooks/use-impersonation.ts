@@ -13,21 +13,21 @@ export function useImpersonation() {
   const originalUser = session?.user?.originalUser;
   const impersonatingAs = session?.user?.impersonatingAs;
 
-  // Check if current user (or original user if impersonating) is admin
-  const canImpersonate =
-    (originalUser?.roleName === "Admin") ||
-    (!isImpersonating && session?.user?.roleName === "Admin");
-
   const startImpersonation = useCallback(
-    async (userId: string) => {
+    async (opts: string | { customerEmail: string; customerName: string }) => {
       setLoading(true);
       setError(null);
 
       try {
+        const body =
+          typeof opts === "string"
+            ? { userId: opts }
+            : { customerEmail: opts.customerEmail, customerName: opts.customerName };
+
         const response = await fetch("/api/auth/impersonate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId }),
+          body: JSON.stringify(body),
         });
 
         const data = await response.json();
@@ -85,7 +85,6 @@ export function useImpersonation() {
     isImpersonating,
     originalUser,
     impersonatingAs,
-    canImpersonate,
     startImpersonation,
     stopImpersonation,
     loading,

@@ -10,6 +10,7 @@ import {
   getMonthlyBreakdown,
   getOrdersNotSentToManufacturer,
   getAvailableYears,
+  getOfficeSalesPersons,
 } from "@/lib/order-process";
 
 export default async function DashboardPage({
@@ -27,18 +28,33 @@ export default async function DashboardPage({
   const isAdminUser = user.roleName === "Admin";
   const canViewAll = user.permissions.includes("orders.view_all");
   const isManager = user.roleName === "Manager";
-  const canEdit = isAdminUser || isManager || user.permissions.includes("orders.edit");
+  // Statuses are managed by Order Processing — read-only in BBD
+  const canEdit = false;
   const isTeamView = isAdminUser || canViewAll;
 
-  // For non-admins, filter by their name as sales person
-  const salesPerson = isTeamView
-    ? undefined
-    : `${user.firstName} ${user.lastName}`;
+  // Determine filter scope:
+  // - Admin: sees all orders (no filter)
+  // - Manager: sees orders from their office's sales reps
+  // - Sales Rep: sees only their own orders
+  let salesPerson: string | undefined;
+  let salesPersons: string[] | undefined;
+
+  if (isAdminUser) {
+    // Admin sees everything
+  } else if (isManager && user.office) {
+    // Manager sees their office's orders
+    salesPersons = await getOfficeSalesPersons(user.office);
+  } else if (isTeamView) {
+    // Other roles with view_all (e.g. BST, R&D) see everything
+  } else {
+    // Individual rep sees only their own
+    salesPerson = `${user.firstName} ${user.lastName}`;
+  }
 
   const [stats, monthlyData, recentOrders, availableYears] = await Promise.all([
-    getOrderStats({ year, salesPerson }),
-    getMonthlyBreakdown({ year, salesPerson }),
-    getOrdersNotSentToManufacturer({ year, salesPerson }),
+    getOrderStats({ year, salesPerson, salesPersons }),
+    getMonthlyBreakdown({ year, salesPerson, salesPersons }),
+    getOrdersNotSentToManufacturer({ year, salesPerson, salesPersons }),
     getAvailableYears(),
   ]);
 
@@ -49,7 +65,7 @@ export default async function DashboardPage({
           <h1 className="text-3xl font-bold">Dashboard</h1>
           <p className="text-muted-foreground">
             Welcome back, {user.firstName}!
-            {!isTeamView && " Here's your personal performance overview."}
+            {isManager && user.office ? ` Showing ${user.office} office.` : !isTeamView ? " Here's your personal performance overview." : ""}
           </p>
         </div>
         <YearSelector currentYear={year} availableYears={availableYears} />

@@ -3,7 +3,6 @@ import { parse } from "csv-parse/sync";
 import * as fs from "fs";
 import * as path from "path";
 import bcrypt from "bcryptjs";
-import { findOrCreateCustomer } from "../src/lib/customers";
 
 const prisma = new PrismaClient();
 
@@ -202,14 +201,15 @@ async function main() {
             customerId = customerCache.get(customerEmail)!;
           } else {
             try {
-              customerId = await findOrCreateCustomer(
-                customerEmail,
-                customerName || "Unknown Customer",
-                row["Customer Phone Number"]?.trim() || null
-              );
-              customerCache.set(customerEmail, customerId);
+              const existing = await prisma.user.findFirst({
+                where: { email: customerEmail, role: { name: "Customer" } },
+                select: { id: true },
+              });
+              if (existing) {
+                customerId = existing.id;
+              }
+              if (customerId) customerCache.set(customerEmail, customerId);
             } catch (e) {
-              // Non-fatal: order can still be created without customerId
               console.warn(`Could not resolve customer for ${customerEmail}:`, e);
             }
           }

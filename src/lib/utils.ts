@@ -49,21 +49,6 @@ export function formatRelativeTime(date: Date | string): string {
   return formatDate(d);
 }
 
-export function generateOrderNumber(): string {
-  const prefix = "BBD";
-  const timestamp = Date.now().toString(36).toUpperCase();
-  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `${prefix}-${timestamp}-${random}`;
-}
-
-export function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .replace(/[\s_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 export function truncate(text: string, length: number): string {
   if (text.length <= length) return text;
   return text.slice(0, length) + "...";
@@ -71,15 +56,6 @@ export function truncate(text: string, length: number): string {
 
 export function getInitials(firstName: string, lastName: string): string {
   return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
-}
-
-export function getFullName(firstName: string, lastName: string): string {
-  return `${firstName} ${lastName}`;
-}
-
-export function isValidEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
 }
 
 export function parseQueryParams(searchParams: URLSearchParams): {

@@ -51,35 +51,6 @@ export async function publishEvent(
 }
 
 /**
- * Get the latest event for an order, optionally filtered by event type.
- */
-export async function getLatestEvent(
-  orderId: string,
-  eventType?: OrderEventType
-): Promise<OrderProcessingEvent | null> {
-  let query = supabaseAdmin
-    .from("order_processing_events")
-    .select("*")
-    .eq("order_id", orderId)
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (eventType) {
-    query = query.eq("event_type", eventType);
-  }
-
-  const { data, error } = await query.single();
-
-  if (error && error.code !== "PGRST116") {
-    // PGRST116 = no rows returned
-    console.error("Failed to get latest event:", error);
-    throw new Error(`Failed to get latest event: ${error.message}`);
-  }
-
-  return (data as OrderProcessingEvent) || null;
-}
-
-/**
  * Get all events for an order, sorted by created_at descending.
  */
 export async function getEventsByOrder(

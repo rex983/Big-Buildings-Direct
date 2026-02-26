@@ -28,8 +28,8 @@ export default async function OrderDetailPage({
   const user = session!.user;
   const isAdminUser = user.roleName === "Admin";
   const canViewAll = user.permissions.includes("orders.view_all");
-  const isManager = user.roleName === "Manager";
-  const canEdit = isAdminUser || isManager || user.permissions.includes("orders.edit");
+  // Statuses are managed by Order Processing — read-only in BBD
+  const canEditStatus = false;
   const canViewInternal = isAdminUser || user.permissions.includes("messages.view_internal");
 
   // Get order data from Order Process
@@ -196,7 +196,7 @@ export default async function OrderDetailPage({
                   orderId={order.id}
                   field={item.field}
                   checked={item.checked}
-                  canEdit={canEdit}
+                  canEdit={canEditStatus}
                   label={item.label}
                 />
                 <span className="text-xs text-muted-foreground">{item.label}</span>

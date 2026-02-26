@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { StatusCheckbox } from "@/components/features/orders/status-checkbox";
-import { getOrders } from "@/lib/order-process";
+import { getOrders, getOfficeSalesPersons } from "@/lib/order-process";
 
 interface SearchParams {
   page?: string;
@@ -28,30 +28,38 @@ export default async function OrdersPage({
   const session = await auth();
   const user = session!.user;
   const isAdminUser = user.roleName === "Admin";
+  const isManager = user.roleName === "Manager";
   const canViewAll = user.permissions.includes("orders.view_all");
 
   const params = await searchParams;
   const page = parseInt(params.page || "1", 10);
 
-  const salesPerson =
-    isAdminUser || canViewAll
-      ? undefined
-      : `${user.firstName} ${user.lastName}`;
+  // Determine filter scope
+  let salesPerson: string | undefined;
+  let salesPersons: string[] | undefined;
+
+  if (isAdminUser) {
+    // Admin sees everything
+  } else if (isManager && user.office) {
+    salesPersons = await getOfficeSalesPersons(user.office);
+  } else if (canViewAll) {
+    // BST, R&D see everything
+  } else {
+    salesPerson = `${user.firstName} ${user.lastName}`;
+  }
 
   const result = await getOrders({
     page,
     pageSize: 10,
     search: params.search,
     salesPerson,
+    salesPersons,
   });
 
   const { orders, total, totalPages } = result;
 
-  const canEditStatus =
-    isAdminUser ||
-    user.roleName === "Manager" ||
-    user.roleName === "BST" ||
-    user.permissions.includes("orders.edit");
+  // Statuses are managed by Order Processing — read-only in BBD
+  const canEditStatus = false;
 
   return (
     <div className="space-y-6">
@@ -95,11 +103,12 @@ export default async function OrdersPage({
                     <TableHead>Order #</TableHead>
                     <TableHead>Customer</TableHead>
                     <TableHead>Building</TableHead>
-                    <TableHead className="text-center">Deposit</TableHead>
+                    <TableHead className="text-right">Deposit</TableHead>
+                    <TableHead className="text-center">Payment</TableHead>
                     <TableHead className="text-center">Sent to Customer</TableHead>
                     <TableHead className="text-center">Signed</TableHead>
                     <TableHead className="text-center">Sent to Mfr</TableHead>
-                    <TableHead>Total</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -131,14 +140,38 @@ export default async function OrdersPage({
                           </p>
                         </div>
                       </TableCell>
+                      <TableCell className="text-right font-medium">
+                        {formatCurrency(order.depositAmount)}
+                      </TableCell>
                       <TableCell className="text-center">
-                        <StatusCheckbox
-                          orderId={order.id}
-                          field="depositCollected"
-                          checked={order.depositCollected}
-                          canEdit={canEditStatus}
-                          label="Deposit Collected"
-                        />
+                        <Badge
+                          variant={
+                            order.paymentStatus === "paid" || order.paymentStatus === "manually_approved"
+                              ? "success"
+                              : order.paymentStatus === "pending"
+                                ? "warning"
+                                : "secondary"
+                          }
+                        >
+                          {order.paymentStatus === "paid"
+                            ? "Paid"
+                            : order.paymentStatus === "manually_approved"
+                              ? "Approved"
+                              : order.paymentStatus === "pending"
+                                ? "Pending"
+                                : "Unpaid"}
+                        </Badge>
+                        {order.paymentType && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {order.paymentType === "stripe_already_paid"
+                              ? "Stripe"
+                              : order.paymentType === "check"
+                                ? "Check"
+                                : order.paymentType === "wire"
+                                  ? "Wire"
+                                  : order.paymentType.replace(/_/g, " ")}
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell className="text-center">
                         <StatusCheckbox
@@ -167,7 +200,7 @@ export default async function OrdersPage({
                           label="Sent to Manufacturer"
                         />
                       </TableCell>
-                      <TableCell>{formatCurrency(order.totalPrice)}</TableCell>
+                      <TableCell className="text-right font-medium">{formatCurrency(order.totalPrice)}</TableCell>
                       <TableCell>{formatDate(order.createdAt)}</TableCell>
                       <TableCell>
                         <Link href={`/orders/${order.id}`}>

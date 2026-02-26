@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePermission, isAdmin } from "@/lib/auth";
-import { getOrders } from "@/lib/order-process";
+import { getOrders, getOfficeSalesPersons } from "@/lib/order-process";
 import type { OPOrderStatus } from "@/types/order-process";
 
 export async function GET(request: NextRequest) {
@@ -13,15 +13,23 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search") || undefined;
     const status = searchParams.get("status") as OPOrderStatus | null;
 
-    const canViewAll =
-      isAdmin(user.roleName) || user.permissions.includes("orders.view_all");
+    const isAdminUser = isAdmin(user.roleName);
+    const isManager = user.roleName === "Manager";
+    const canViewAll = user.permissions.includes("orders.view_all");
 
-    // Non-admins only see orders where they are the sales person
-    // We use the user's name as the sales_person filter since Order Process
-    // stores sales_person as a name string, not a user ID.
-    const salesPerson = canViewAll
-      ? undefined
-      : `${user.firstName} ${user.lastName}`;
+    // Determine filter scope
+    let salesPerson: string | undefined;
+    let salesPersons: string[] | undefined;
+
+    if (isAdminUser) {
+      // Admin sees everything
+    } else if (isManager && user.office) {
+      salesPersons = await getOfficeSalesPersons(user.office);
+    } else if (canViewAll) {
+      // BST, R&D see everything
+    } else {
+      salesPerson = `${user.firstName} ${user.lastName}`;
+    }
 
     const result = await getOrders({
       page,
@@ -29,6 +37,7 @@ export async function GET(request: NextRequest) {
       search,
       status: status || undefined,
       salesPerson,
+      salesPersons,
     });
 
     return NextResponse.json({

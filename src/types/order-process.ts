@@ -10,6 +10,7 @@ export interface OPCustomerInfo {
   firstName: string;
   lastName: string;
   deliveryAddress: string;
+  city?: string;
   state: string;
   zip: string;
   phone: string;
@@ -164,6 +165,8 @@ export interface DisplayOrder {
   depositAmount: number;
   depositCollected: boolean;
   depositDate: string | null;
+  paymentType: string;
+  paymentStatus: string;
   sentToCustomer: boolean;
   sentToCustomerDate: string | null;
   customerSigned: boolean;

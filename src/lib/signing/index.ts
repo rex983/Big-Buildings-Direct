@@ -1,13 +1,6 @@
 import { PDFDocument, rgb } from "pdf-lib";
 import { v4 as uuidv4 } from "uuid";
 
-export interface SigningDetails {
-  signatureData: string; // Base64 PNG
-  signerIp: string;
-  signerAgent: string;
-  signedAt: Date;
-}
-
 export function generateSigningToken(): string {
   return uuidv4();
 }
@@ -101,23 +94,3 @@ export function isValidSignatureData(signatureData: string): boolean {
   return base64Regex.test(signatureData) || pureBase64Regex.test(signatureData);
 }
 
-// Create audit trail entry
-export function createSigningAuditTrail(details: SigningDetails): string {
-  return JSON.stringify({
-    signedAt: details.signedAt.toISOString(),
-    signerIp: details.signerIp,
-    signerAgent: details.signerAgent,
-    signatureHash: hashSignature(details.signatureData),
-  });
-}
-
-// Simple hash for signature verification
-function hashSignature(signatureData: string): string {
-  let hash = 0;
-  for (let i = 0; i < signatureData.length; i++) {
-    const char = signatureData.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash = hash & hash;
-  }
-  return Math.abs(hash).toString(16);
-}

@@ -7,6 +7,7 @@
  */
 
 import { supabaseAdmin } from "@/lib/supabase";
+import { prisma } from "@/lib/prisma";
 import {
   type OPOrderRow,
   type OPOrderStatus,
@@ -15,10 +16,24 @@ import {
   OP_STATUS_ORDER,
 } from "@/types/order-process";
 
+// ── Office helpers ──────────────────────────────────────────────────
+
+/**
+ * Get all sales person names (firstName + lastName) belonging to a given office.
+ * Used by managers to scope their view to their office's reps.
+ */
+export async function getOfficeSalesPersons(office: string): Promise<string[]> {
+  const users = await prisma.user.findMany({
+    where: { office, isActive: true },
+    select: { firstName: true, lastName: true },
+  });
+  return users.map((u) => `${u.firstName} ${u.lastName}`);
+}
+
 // ── Mapping helpers ───────────────────────────────────────────────────
 
 /** Convert a raw Order Process DB row to a BBD display-friendly object. */
-export function mapToDisplay(row: OPOrderRow): DisplayOrder {
+function mapToDisplay(row: OPOrderRow): DisplayOrder {
   const statusIndex = OP_STATUS_ORDER.indexOf(row.status);
   const isCancelled = row.status === "cancelled";
 
@@ -51,6 +66,8 @@ export function mapToDisplay(row: OPOrderRow): DisplayOrder {
     depositAmount: row.pricing?.deposit || 0,
     depositCollected: depositPaid,
     depositDate: row.paid_at || null,
+    paymentType: row.payment?.type || "",
+    paymentStatus: row.payment?.status || "",
     sentToCustomer: !isCancelled && statusIndex >= 2,
     sentToCustomerDate: row.sent_for_signature_at || null,
     customerSigned: !isCancelled && statusIndex >= 3,
@@ -77,17 +94,20 @@ export function mapToDisplay(row: OPOrderRow): DisplayOrder {
 
 const TABLE = "orders";
 
-export interface OrderListOptions {
+interface OrderListOptions {
   page?: number;
   pageSize?: number;
   search?: string;
   status?: OPOrderStatus;
+  /** Filter to a single sales person (for individual rep view) */
   salesPerson?: string;
+  /** Filter to multiple sales persons (for office-scoped manager view) */
+  salesPersons?: string[];
   /** If true, exclude cancelled orders */
   excludeCancelled?: boolean;
 }
 
-export interface PaginatedOrders {
+interface PaginatedOrders {
   orders: DisplayOrder[];
   total: number;
   page: number;
@@ -114,6 +134,8 @@ export async function getOrders(
   }
   if (opts.salesPerson) {
     query = query.eq("sales_person", opts.salesPerson);
+  } else if (opts.salesPersons && opts.salesPersons.length > 0) {
+    query = query.in("sales_person", opts.salesPersons);
   }
   if (opts.search) {
     const term = `%${opts.search}%`;
@@ -127,8 +149,8 @@ export async function getOrders(
   const { data, count, error } = await query;
 
   if (error) {
-    console.error("getOrders error:", error);
-    throw new Error(`Failed to fetch orders: ${error.message}`);
+    console.error("getOrders error:", JSON.stringify(error, null, 2));
+    throw new Error(`Failed to fetch orders: ${error.message} (code: ${error.code}, details: ${error.details})`);
   }
 
   const rows = (data || []) as OPOrderRow[];
@@ -162,25 +184,6 @@ export async function getOrder(
   return mapToDisplay(data as OPOrderRow);
 }
 
-/** Get a single order by order number. */
-export async function getOrderByNumber(
-  orderNumber: string
-): Promise<DisplayOrder | null> {
-  const { data, error } = await supabaseAdmin
-    .from(TABLE)
-    .select("*")
-    .eq("order_number", orderNumber)
-    .single();
-
-  if (error) {
-    if (error.code === "PGRST116") return null;
-    console.error("getOrderByNumber error:", error);
-    throw new Error(`Failed to fetch order: ${error.message}`);
-  }
-
-  return mapToDisplay(data as OPOrderRow);
-}
-
 /** Get orders for a customer by email (for customer portal). */
 export async function getOrdersByCustomerEmail(
   email: string,
@@ -206,9 +209,109 @@ export async function getOrdersByCustomerEmail(
   return ((data || []) as OPOrderRow[]).map(mapToDisplay);
 }
 
+// ── Customer aggregation helpers ──────────────────────────────────────
+
+export interface CustomerSummary {
+  email: string;
+  name: string;
+  phone: string;
+  orderCount: number;
+  totalValue: number;
+  sentToMfr: number;
+  lastOrderDate: string;
+}
+
+/**
+ * Build a list of unique customers by aggregating all orders from Supabase.
+ * Grouped by lowercase customer email.
+ */
+export async function getCustomerList(opts?: {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<{ customers: CustomerSummary[]; total: number; page: number; pageSize: number; totalPages: number }> {
+  const page = opts?.page || 1;
+  const pageSize = opts?.pageSize || 20;
+
+  // Fetch all orders with just the fields we need
+  const { data, error } = await supabaseAdmin
+    .from(TABLE)
+    .select("customer, pricing, status, created_at, ready_for_manufacturer_at")
+    .neq("status", "draft")
+    .eq("is_test_mode", false);
+
+  if (error) {
+    console.error("getCustomerList error:", error);
+    throw new Error(`Failed to fetch customers: ${error.message}`);
+  }
+
+  // Group by lowercase email
+  const map = new Map<string, CustomerSummary>();
+
+  for (const row of (data || []) as OPOrderRow[]) {
+    const email = (row.customer?.email || "").toLowerCase().trim();
+    if (!email) continue;
+
+    const existing = map.get(email);
+    const value = row.pricing?.subtotalBeforeTax || 0;
+    const isSentToMfr = row.status === "ready_for_manufacturer";
+    const date = row.created_at;
+
+    if (existing) {
+      existing.orderCount++;
+      existing.totalValue += value;
+      if (isSentToMfr) existing.sentToMfr++;
+      if (date > existing.lastOrderDate) {
+        existing.lastOrderDate = date;
+        // Update name/phone from the most recent order
+        existing.name = `${row.customer?.firstName || ""} ${row.customer?.lastName || ""}`.trim() || existing.name;
+        existing.phone = row.customer?.phone || existing.phone;
+      }
+    } else {
+      map.set(email, {
+        email,
+        name: `${row.customer?.firstName || ""} ${row.customer?.lastName || ""}`.trim() || "Unknown",
+        phone: row.customer?.phone || "",
+        orderCount: 1,
+        totalValue: value,
+        sentToMfr: isSentToMfr ? 1 : 0,
+        lastOrderDate: date,
+      });
+    }
+  }
+
+  // Convert to array and apply search
+  let customers = Array.from(map.values());
+
+  if (opts?.search) {
+    const term = opts.search.toLowerCase();
+    customers = customers.filter(
+      (c) =>
+        c.name.toLowerCase().includes(term) ||
+        c.email.toLowerCase().includes(term) ||
+        c.phone.includes(term)
+    );
+  }
+
+  // Sort by most recent order
+  customers.sort((a, b) => b.lastOrderDate.localeCompare(a.lastOrderDate));
+
+  const total = customers.length;
+  const start = (page - 1) * pageSize;
+  const paged = customers.slice(start, start + pageSize);
+
+  return {
+    customers: paged,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.ceil(total / pageSize),
+  };
+}
+
 // ── Dashboard aggregation helpers ─────────────────────────────────────
 
-export interface OrderStats {
+interface OrderStats {
   totalOrders: number;
   sentToManufacturer: number;
   totalDepositsCollected: number;
@@ -218,6 +321,7 @@ export interface OrderStats {
 export async function getOrderStats(opts: {
   year?: number;
   salesPerson?: string;
+  salesPersons?: string[];
 }): Promise<OrderStats> {
   // We need to fetch all non-cancelled orders and calculate in JS
   // because Supabase client doesn't support SQL aggregation on JSONB fields.
@@ -228,6 +332,8 @@ export async function getOrderStats(opts: {
 
   if (opts.salesPerson) {
     query = query.eq("sales_person", opts.salesPerson);
+  } else if (opts.salesPersons && opts.salesPersons.length > 0) {
+    query = query.in("sales_person", opts.salesPersons);
   }
 
   if (opts.year) {
@@ -264,7 +370,7 @@ export async function getOrderStats(opts: {
   return { totalOrders, sentToManufacturer, totalDepositsCollected };
 }
 
-export interface MonthlyData {
+interface MonthlyData {
   month: string;
   year: number;
   monthNum: number;
@@ -276,6 +382,7 @@ export interface MonthlyData {
 export async function getMonthlyBreakdown(opts: {
   year: number;
   salesPerson?: string;
+  salesPersons?: string[];
 }): Promise<MonthlyData[]> {
   const yearStart = `${opts.year}-01-01T00:00:00.000Z`;
   const yearEnd = `${opts.year + 1}-01-01T00:00:00.000Z`;
@@ -289,6 +396,8 @@ export async function getMonthlyBreakdown(opts: {
 
   if (opts.salesPerson) {
     query = query.eq("sales_person", opts.salesPerson);
+  } else if (opts.salesPersons && opts.salesPersons.length > 0) {
+    query = query.in("sales_person", opts.salesPersons);
   }
 
   const { data, error } = await query;
@@ -320,6 +429,7 @@ export async function getMonthlyBreakdown(opts: {
 export async function getOrdersNotSentToManufacturer(opts: {
   year: number;
   salesPerson?: string;
+  salesPersons?: string[];
 }): Promise<DisplayOrder[]> {
   const yearStart = `${opts.year}-01-01T00:00:00.000Z`;
   const yearEnd = `${opts.year + 1}-01-01T00:00:00.000Z`;
@@ -335,6 +445,8 @@ export async function getOrdersNotSentToManufacturer(opts: {
 
   if (opts.salesPerson) {
     query = query.eq("sales_person", opts.salesPerson);
+  } else if (opts.salesPersons && opts.salesPersons.length > 0) {
+    query = query.in("sales_person", opts.salesPersons);
   }
 
   const { data, error } = await query;
@@ -368,13 +480,14 @@ export async function getAvailableYears(): Promise<number[]> {
 
 // ── Map locations (for map page) ──────────────────────────────────────
 
-export interface OrderLocation {
+interface OrderLocation {
   id: string;
   orderNumber: string;
   customerName: string;
   buildingType: string;
   buildingSize: string;
   deliveryAddress: string;
+  deliveryCity: string;
   deliveryState: string;
   deliveryZip: string;
   totalPrice: number;
@@ -387,6 +500,7 @@ export interface OrderLocation {
 /** Get order locations for the map page. */
 export async function getOrderLocations(opts?: {
   salesPerson?: string;
+  salesPersons?: string[];
 }): Promise<OrderLocation[]> {
   let query = supabaseAdmin
     .from(TABLE)
@@ -397,6 +511,8 @@ export async function getOrderLocations(opts?: {
 
   if (opts?.salesPerson) {
     query = query.eq("sales_person", opts.salesPerson);
+  } else if (opts?.salesPersons && opts.salesPersons.length > 0) {
+    query = query.in("sales_person", opts.salesPersons);
   }
 
   const { data, error } = await query;
@@ -413,6 +529,7 @@ export async function getOrderLocations(opts?: {
         ? `${row.building.overallWidth}x${row.building.buildingLength}`
         : "",
     deliveryAddress: row.customer?.deliveryAddress || "",
+    deliveryCity: row.customer?.city || "",
     deliveryState: row.customer?.state || "",
     deliveryZip: row.customer?.zip || "",
     totalPrice: row.pricing?.subtotalBeforeTax || 0,
@@ -438,14 +555,60 @@ export async function updateOrderField(
     sentToManufacturer: "ready_for_manufacturer",
   };
 
+  // Map for reverting: which status to revert to when unchecking
+  const statusReverts: Record<string, OPOrderStatus> = {
+    sentToCustomer: "pending_payment",
+    customerSigned: "sent_for_signature",
+    sentToManufacturer: "signed",
+  };
+
   if (field in statusTransitions && value === true) {
     // Status checkbox toggled ON → advance order status
+    const now = new Date().toISOString();
+    const dateFields: Record<string, string> = {
+      sentToCustomer: "sent_for_signature_at",
+      customerSigned: "signed_at",
+      sentToManufacturer: "ready_for_manufacturer_at",
+    };
+
+    const updateData: Record<string, unknown> = {
+      status: statusTransitions[field],
+      updated_at: now,
+    };
+
+    if (dateFields[field]) {
+      updateData[dateFields[field]] = now;
+    }
+
     const { error } = await supabaseAdmin
       .from(TABLE)
-      .update({
-        status: statusTransitions[field],
-        updated_at: new Date().toISOString(),
-      })
+      .update(updateData)
+      .eq("id", orderId);
+
+    if (error) throw new Error(`updateOrderField error: ${error.message}`);
+    return;
+  }
+
+  if (field in statusReverts && value === false) {
+    // Status checkbox toggled OFF → revert order status to previous stage
+    const dateFields: Record<string, string> = {
+      sentToCustomer: "sent_for_signature_at",
+      customerSigned: "signed_at",
+      sentToManufacturer: "ready_for_manufacturer_at",
+    };
+
+    const updateData: Record<string, unknown> = {
+      status: statusReverts[field],
+      updated_at: new Date().toISOString(),
+    };
+
+    if (dateFields[field]) {
+      updateData[dateFields[field]] = null;
+    }
+
+    const { error } = await supabaseAdmin
+      .from(TABLE)
+      .update(updateData)
       .eq("id", orderId);
 
     if (error) throw new Error(`updateOrderField error: ${error.message}`);
@@ -459,6 +622,21 @@ export async function updateOrderField(
       .update({
         payment: { status: "paid" },
         paid_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", orderId);
+
+    if (error) throw new Error(`updateOrderField error: ${error.message}`);
+    return;
+  }
+
+  if (field === "depositCollected" && value === false) {
+    // Revert deposit to pending
+    const { error } = await supabaseAdmin
+      .from(TABLE)
+      .update({
+        payment: { status: "pending" },
+        paid_at: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", orderId);

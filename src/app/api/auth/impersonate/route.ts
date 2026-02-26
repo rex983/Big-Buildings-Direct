@@ -34,56 +34,86 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { userId } = body;
+    const { userId, customerEmail, customerName } = body;
 
-    if (!userId) {
+    if (!userId && !customerEmail) {
       return NextResponse.json(
-        { success: false, error: "User ID is required" },
+        { success: false, error: "User ID or customer email is required" },
         { status: 400 }
       );
     }
 
-    // Cannot impersonate yourself
-    if (userId === actualUser.id) {
-      return NextResponse.json(
-        { success: false, error: "Cannot impersonate yourself" },
-        { status: 400 }
-      );
-    }
+    let impersonatingAs: BaseSessionUser;
 
-    // Fetch target user with role and permissions
-    const targetUser = await prisma.user.findUnique({
-      where: { id: userId },
-      include: {
-        role: {
-          include: {
-            permissions: {
-              include: {
-                permission: true,
+    if (customerEmail) {
+      // Supabase-derived customer impersonation (no Prisma user needed)
+      const email = (customerEmail as string).toLowerCase().trim();
+      if (email === actualUser.email) {
+        return NextResponse.json(
+          { success: false, error: "Cannot impersonate yourself" },
+          { status: 400 }
+        );
+      }
+
+      // Get the Customer role ID from Prisma (for session compatibility)
+      const customerRole = await prisma.role.findUnique({
+        where: { name: "Customer" },
+        select: { id: true },
+      });
+
+      const nameParts = ((customerName as string) || "Customer").split(" ");
+
+      impersonatingAs = {
+        id: `customer_${email}`,
+        email,
+        firstName: nameParts[0] || "Customer",
+        lastName: nameParts.slice(1).join(" ") || "",
+        roleId: customerRole?.id || "customer",
+        roleName: "Customer",
+        permissions: [],
+      };
+    } else {
+      // Standard Prisma user impersonation
+      if (userId === actualUser.id) {
+        return NextResponse.json(
+          { success: false, error: "Cannot impersonate yourself" },
+          { status: 400 }
+        );
+      }
+
+      const targetUser = await prisma.user.findUnique({
+        where: { id: userId },
+        include: {
+          role: {
+            include: {
+              permissions: {
+                include: {
+                  permission: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    if (!targetUser || !targetUser.isActive) {
-      return NextResponse.json(
-        { success: false, error: "User not found or inactive" },
-        { status: 404 }
-      );
+      if (!targetUser || !targetUser.isActive) {
+        return NextResponse.json(
+          { success: false, error: "User not found or inactive" },
+          { status: 404 }
+        );
+      }
+
+      impersonatingAs = {
+        id: targetUser.id,
+        email: targetUser.email,
+        firstName: targetUser.firstName,
+        lastName: targetUser.lastName,
+        roleId: targetUser.roleId,
+        roleName: targetUser.role.name,
+        permissions: targetUser.role.permissions.map((rp) => rp.permission.name),
+        office: targetUser.office || undefined,
+      };
     }
-
-    // Build the user object to impersonate
-    const impersonatingAs: BaseSessionUser = {
-      id: targetUser.id,
-      email: targetUser.email,
-      firstName: targetUser.firstName,
-      lastName: targetUser.lastName,
-      roleId: targetUser.roleId,
-      roleName: targetUser.role.name,
-      permissions: targetUser.role.permissions.map((rp) => rp.permission.name),
-    };
 
     return NextResponse.json({
       success: true,

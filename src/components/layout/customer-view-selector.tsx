@@ -14,11 +14,10 @@ import {
 import { Button } from "@/components/ui/button";
 
 interface Customer {
-  id: string;
   email: string;
-  firstName: string;
-  lastName: string;
-  isActive: boolean;
+  name: string;
+  phone: string;
+  orderCount: number;
 }
 
 function UsersIcon({ className }: { className?: string }) {
@@ -47,50 +46,29 @@ export function CustomerViewSelector() {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [fetching, setFetching] = React.useState(false);
   const [fetchError, setFetchError] = React.useState<string | null>(null);
-  const [customerRoleId, setCustomerRoleId] = React.useState<string | null>(null);
   const [isOpen, setIsOpen] = React.useState(false);
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
-  // Check if current user can view as customer (Admin only for now)
   const actualUser = session?.user?.originalUser || session?.user;
   const canViewAsCustomer = actualUser?.roleName === "Admin";
 
-  // Don't show if user cannot view as customer or is already impersonating
   if (!canViewAsCustomer || isImpersonating) {
     return null;
   }
 
-  const fetchCustomerRoleId = async () => {
-    try {
-      const response = await fetch("/api/roles");
-      const data = await response.json();
-      if (data.success) {
-        const customerRole = data.data.find((r: { name: string }) => r.name === "Customer");
-        if (customerRole) {
-          setCustomerRoleId(customerRole.id);
-          return customerRole.id;
-        }
-      }
-    } catch {
-      console.error("Failed to fetch customer role");
-    }
-    return null;
-  };
-
-  const fetchCustomers = async (roleId: string) => {
+  const fetchCustomers = async () => {
     setFetching(true);
     setFetchError(null);
 
     try {
-      const response = await fetch(`/api/users?roleId=${roleId}&pageSize=100`);
+      const response = await fetch("/api/customers?pageSize=200");
       const data = await response.json();
 
       if (data.success) {
-        const activeCustomers = data.data.items.filter((u: Customer) => u.isActive);
-        setCustomers(activeCustomers);
-        setFilteredCustomers(activeCustomers);
+        setCustomers(data.data.customers);
+        setFilteredCustomers(data.data.customers);
       } else {
-        setFetchError("Failed to load customers");
+        setFetchError(data.error || "Failed to load customers");
       }
     } catch {
       setFetchError("Failed to load customers");
@@ -102,23 +80,14 @@ export function CustomerViewSelector() {
   const handleOpenChange = async (open: boolean) => {
     setIsOpen(open);
     if (open) {
-      // Reset search on open
       setSearchQuery("");
 
-      // Fetch role ID if not already fetched
-      let roleId = customerRoleId;
-      if (!roleId) {
-        roleId = await fetchCustomerRoleId();
-      }
-
-      // Fetch customers if we have the role ID
-      if (roleId && customers.length === 0) {
-        await fetchCustomers(roleId);
+      if (customers.length === 0) {
+        await fetchCustomers();
       } else {
         setFilteredCustomers(customers);
       }
 
-      // Focus search input after dropdown opens
       setTimeout(() => {
         searchInputRef.current?.focus();
       }, 100);
@@ -130,18 +99,19 @@ export function CustomerViewSelector() {
     const lowerQuery = query.toLowerCase();
     const filtered = customers.filter(
       (c) =>
-        c.firstName.toLowerCase().includes(lowerQuery) ||
-        c.lastName.toLowerCase().includes(lowerQuery) ||
+        c.name.toLowerCase().includes(lowerQuery) ||
         c.email.toLowerCase().includes(lowerQuery)
     );
     setFilteredCustomers(filtered);
   };
 
-  const handleSelect = async (customerId: string) => {
-    const success = await startImpersonation(customerId);
+  const handleSelect = async (customer: Customer) => {
+    const success = await startImpersonation({
+      customerEmail: customer.email,
+      customerName: customer.name,
+    });
     if (success) {
       setIsOpen(false);
-      // Redirect to customer portal after impersonation
       window.location.href = "/portal";
     }
   };
@@ -162,7 +132,6 @@ export function CustomerViewSelector() {
         <DropdownMenuLabel>View as Customer</DropdownMenuLabel>
         <DropdownMenuSeparator />
 
-        {/* Search input */}
         <div className="px-2 py-2">
           <input
             ref={searchInputRef}
@@ -176,7 +145,6 @@ export function CustomerViewSelector() {
 
         <DropdownMenuSeparator />
 
-        {/* Customer list */}
         <div className="max-h-64 overflow-y-auto">
           {fetching && (
             <div className="px-2 py-4 text-center text-sm text-muted-foreground">
@@ -204,15 +172,15 @@ export function CustomerViewSelector() {
 
           {filteredCustomers.map((customer) => (
             <DropdownMenuItem
-              key={customer.id}
-              onClick={() => handleSelect(customer.id)}
+              key={customer.email}
+              onClick={() => handleSelect(customer)}
               disabled={loading}
               className="flex flex-col items-start gap-0.5 py-2 cursor-pointer"
             >
-              <span className="font-medium">
-                {customer.firstName} {customer.lastName}
+              <span className="font-medium">{customer.name}</span>
+              <span className="text-xs text-muted-foreground">
+                {customer.email} ({customer.orderCount} orders)
               </span>
-              <span className="text-xs text-muted-foreground">{customer.email}</span>
             </DropdownMenuItem>
           ))}
         </div>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase";
+import { getOfficeSalesPersons } from "@/lib/order-process";
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,6 +12,7 @@ export async function GET(request: NextRequest) {
 
     const user = session.user;
     const isAdmin = user.roleName === "Admin";
+    const isManager = user.roleName === "Manager";
     const canViewAll = user.permissions.includes("orders.view_all");
 
     // Get date range from query params
@@ -18,91 +20,86 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
 
-    // Build where clause
-    const whereClause: Record<string, unknown> = isAdmin || canViewAll ? {} : { salesRepId: user.id };
+    // Build Supabase query — fetch fields needed for aggregation
+    let query = supabaseAdmin
+      .from("orders")
+      .select("sales_person, customer, building, pricing, created_at")
+      .neq("status", "cancelled");
 
-    if (startDate || endDate) {
-      whereClause.dateSold = {};
-      if (startDate) {
-        (whereClause.dateSold as Record<string, Date>).gte = new Date(startDate);
+    // Permission filter:
+    // - Admin: sees all
+    // - Manager: sees their office's reps
+    // - Others with view_all (BST, R&D): sees all
+    // - Sales Rep: sees only their own
+    if (isManager && user.office) {
+      const officeReps = await getOfficeSalesPersons(user.office);
+      if (officeReps.length > 0) {
+        query = query.in("sales_person", officeReps);
       }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setDate(end.getDate() + 1);
-        (whereClause.dateSold as Record<string, Date>).lt = end;
+    } else if (!isAdmin && !canViewAll) {
+      const salesPerson = `${user.firstName} ${user.lastName}`;
+      query = query.eq("sales_person", salesPerson);
+    }
+
+    // Date filtering on created_at
+    if (startDate) {
+      query = query.gte("created_at", `${startDate}T00:00:00.000Z`);
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setDate(end.getDate() + 1);
+      query = query.lt("created_at", end.toISOString());
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error("Analytics query error:", JSON.stringify(error));
+      return NextResponse.json(
+        { success: false, error: "Failed to fetch analytics" },
+        { status: 500 }
+      );
+    }
+
+    // Aggregate in JS
+    const salesRepMap = new Map<string, { name: string; quantity: number; totalAmount: number }>();
+    const stateMap = new Map<string, { state: string; quantity: number; totalAmount: number }>();
+    const mfrMap = new Map<string, { manufacturer: string; quantity: number; totalAmount: number }>();
+
+    for (const row of data || []) {
+      const amount = row.pricing?.subtotalBeforeTax || 0;
+
+      // Sales rep aggregation
+      const rep = row.sales_person;
+      if (rep) {
+        const existing = salesRepMap.get(rep) || { name: rep, quantity: 0, totalAmount: 0 };
+        existing.quantity += 1;
+        existing.totalAmount += amount;
+        salesRepMap.set(rep, existing);
+      }
+
+      // State aggregation
+      const state = row.customer?.state;
+      if (state) {
+        const existing = stateMap.get(state) || { state, quantity: 0, totalAmount: 0 };
+        existing.quantity += 1;
+        existing.totalAmount += amount;
+        stateMap.set(state, existing);
+      }
+
+      // Manufacturer aggregation
+      const mfr = row.building?.manufacturer;
+      if (mfr) {
+        const existing = mfrMap.get(mfr) || { manufacturer: mfr, quantity: 0, totalAmount: 0 };
+        existing.quantity += 1;
+        existing.totalAmount += amount;
+        mfrMap.set(mfr, existing);
       }
     }
 
-    // Use Prisma groupBy for efficient database-level aggregation
-    const [stateAgg, manufacturerAgg, salesRepAgg] = await Promise.all([
-      // State aggregation
-      prisma.order.groupBy({
-        by: ["deliveryState"],
-        where: whereClause,
-        _count: { id: true },
-        _sum: { totalPrice: true },
-      }),
-
-      // Manufacturer aggregation
-      prisma.order.groupBy({
-        by: ["installer"],
-        where: whereClause,
-        _count: { id: true },
-        _sum: { totalPrice: true },
-      }),
-
-      // Sales Rep aggregation
-      prisma.order.groupBy({
-        by: ["salesRepId"],
-        where: whereClause,
-        _count: { id: true },
-        _sum: { totalPrice: true },
-      }),
-    ]);
-
-    // Get sales rep names in one query
-    const salesRepIds = salesRepAgg
-      .map((r) => r.salesRepId)
-      .filter((id): id is string => id !== null);
-
-    const salesReps = salesRepIds.length > 0
-      ? await prisma.user.findMany({
-          where: { id: { in: salesRepIds } },
-          select: { id: true, firstName: true, lastName: true },
-        })
-      : [];
-
-    const salesRepMap = new Map(salesReps.map((u) => [u.id, `${u.firstName} ${u.lastName}`]));
-
-    // Format state data (filter out nulls, keep raw DB values for accurate filtering)
-    const stateData = stateAgg
-      .filter((row) => row.deliveryState)
-      .map((row) => ({
-        state: row.deliveryState!,
-        quantity: row._count.id,
-        totalAmount: row._sum.totalPrice?.toNumber() || 0,
-      }))
-      .sort((a, b) => b.totalAmount - a.totalAmount);
-
-    // Format manufacturer data (filter out nulls)
-    const manufacturerData = manufacturerAgg
-      .filter((row) => row.installer)
-      .map((row) => ({
-        manufacturer: row.installer!,
-        quantity: row._count.id,
-        totalAmount: row._sum.totalPrice?.toNumber() || 0,
-      }))
-      .sort((a, b) => b.totalAmount - a.totalAmount);
-
-    // Format sales rep data (filter out nulls)
-    const salesRepData = salesRepAgg
-      .filter((row) => row.salesRepId && salesRepMap.has(row.salesRepId))
-      .map((row) => ({
-        name: salesRepMap.get(row.salesRepId!)!,
-        quantity: row._count.id,
-        totalAmount: row._sum.totalPrice?.toNumber() || 0,
-      }))
-      .sort((a, b) => b.totalAmount - a.totalAmount);
+    const salesRepData = Array.from(salesRepMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+    const stateData = Array.from(stateMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
+    const manufacturerData = Array.from(mfrMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
 
     return NextResponse.json({
       success: true,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase";
+import { getOfficeSalesPersons } from "@/lib/order-process";
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,6 +12,7 @@ export async function GET(request: NextRequest) {
 
     const user = session.user;
     const isAdmin = user.roleName === "Admin";
+    const isManager = user.roleName === "Manager";
     const canViewAll = user.permissions.includes("orders.view_all");
 
     // Get date range from query params
@@ -18,98 +20,106 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
 
-    // Build where clause
-    const whereClause: Record<string, unknown> = isAdmin || canViewAll ? {} : { salesRepId: user.id };
+    // Query change_orders from Supabase (the OP equivalent of revisions)
+    let query = supabaseAdmin
+      .from("change_orders")
+      .select("order_id, order_number, new_values, previous_values, new_customer, new_building, status, created_at")
+      .neq("status", "cancelled");
 
-    if (startDate || endDate) {
-      whereClause.revisionDate = {};
-      if (startDate) {
-        (whereClause.revisionDate as Record<string, Date>).gte = new Date(startDate);
-      }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setDate(end.getDate() + 1);
-        (whereClause.revisionDate as Record<string, Date>).lt = end;
+    if (startDate) {
+      query = query.gte("created_at", `${startDate}T00:00:00.000Z`);
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setDate(end.getDate() + 1);
+      query = query.lt("created_at", end.toISOString());
+    }
+
+    const { data: changeOrders, error: coError } = await query;
+
+    if (coError) {
+      console.error("Revisions analytics query error:", JSON.stringify(coError));
+      return NextResponse.json(
+        { success: false, error: "Failed to fetch revision analytics" },
+        { status: 500 }
+      );
+    }
+
+    // If there are change orders, look up the parent orders for sales_person, state, manufacturer
+    const orderIds = [...new Set((changeOrders || []).map((co) => co.order_id))];
+
+    let ordersMap = new Map<string, { sales_person: string; state: string; manufacturer: string }>();
+
+    if (orderIds.length > 0) {
+      const { data: orders } = await supabaseAdmin
+        .from("orders")
+        .select("id, sales_person, customer, building")
+        .in("id", orderIds);
+
+      for (const o of orders || []) {
+        ordersMap.set(o.id, {
+          sales_person: o.sales_person || "",
+          state: o.customer?.state || "",
+          manufacturer: o.building?.manufacturer || "",
+        });
       }
     }
 
-    // Aggregate by sales rep using groupBy
-    const salesRepAgg = await prisma.revision.groupBy({
-      by: ["salesRepId"],
-      where: { ...whereClause, salesRepId: { not: null } },
-      _count: { id: true },
-      _sum: { newOrderTotal: true },
-    });
+    // Permission filter — determine allowed sales persons
+    let allowedReps: Set<string> | null = null; // null = no filter (sees all)
+    if (isManager && user.office) {
+      const officeReps = await getOfficeSalesPersons(user.office);
+      allowedReps = new Set(officeReps);
+    } else if (!isAdmin && !canViewAll) {
+      allowedReps = new Set([`${user.firstName} ${user.lastName}`]);
+    }
 
-    // Fetch sales rep names for the grouped IDs
-    const salesRepIds = salesRepAgg
-      .map((r) => r.salesRepId)
-      .filter((id): id is string => id !== null);
-    const salesReps = salesRepIds.length > 0
-      ? await prisma.user.findMany({
-          where: { id: { in: salesRepIds } },
-          select: { id: true, firstName: true, lastName: true },
-        })
-      : [];
-    const salesRepMap = new Map(salesReps.map((u) => [u.id, `${u.firstName} ${u.lastName}`]));
-
-    const salesRepData = salesRepAgg
-      .filter((r) => r.salesRepId && salesRepMap.has(r.salesRepId))
-      .map((r) => ({
-        name: salesRepMap.get(r.salesRepId!)!,
-        quantity: r._count.id,
-        totalAmount: r._sum.newOrderTotal?.toNumber() || 0,
-      }))
-      .sort((a, b) => b.totalAmount - a.totalAmount);
-
-    // Aggregate by state — need to go through order relation, so use a lightweight fetch
-    // (Prisma groupBy doesn't support grouping by relation fields)
-    const stateRevisions = await prisma.revision.findMany({
-      where: whereClause,
-      select: {
-        newOrderTotal: true,
-        order: { select: { deliveryState: true } },
-      },
-    });
-
+    // Aggregate
+    const salesRepMap = new Map<string, { name: string; quantity: number; totalAmount: number }>();
     const stateMap = new Map<string, { state: string; quantity: number; totalAmount: number }>();
-    for (const rev of stateRevisions) {
-      const state = rev.order?.deliveryState;
-      if (!state) continue;
-      const existing = stateMap.get(state) || { state, quantity: 0, totalAmount: 0 };
-      existing.quantity += 1;
-      existing.totalAmount += rev.newOrderTotal?.toNumber() || 0;
-      stateMap.set(state, existing);
-    }
-    const stateData = Array.from(stateMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
-
-    // Aggregate by manufacturer — also needs relation/coalesce logic, use lightweight fetch
-    const mfrRevisions = await prisma.revision.findMany({
-      where: whereClause,
-      select: {
-        newOrderTotal: true,
-        newManufacturer: true,
-        originalManufacturer: true,
-      },
-    });
-
     const mfrMap = new Map<string, { manufacturer: string; quantity: number; totalAmount: number }>();
-    for (const rev of mfrRevisions) {
-      const manufacturer = rev.newManufacturer || rev.originalManufacturer;
-      if (!manufacturer) continue;
-      const existing = mfrMap.get(manufacturer) || { manufacturer, quantity: 0, totalAmount: 0 };
-      existing.quantity += 1;
-      existing.totalAmount += rev.newOrderTotal?.toNumber() || 0;
-      mfrMap.set(manufacturer, existing);
+
+    for (const co of changeOrders || []) {
+      const parent = ordersMap.get(co.order_id);
+      if (!parent) continue;
+      if (allowedReps && !allowedReps.has(parent.sales_person)) continue;
+
+      const amount = co.new_values?.subtotalBeforeTax || co.previous_values?.subtotalBeforeTax || 0;
+
+      // Sales rep
+      const rep = parent.sales_person;
+      if (rep) {
+        const existing = salesRepMap.get(rep) || { name: rep, quantity: 0, totalAmount: 0 };
+        existing.quantity += 1;
+        existing.totalAmount += amount;
+        salesRepMap.set(rep, existing);
+      }
+
+      // State (prefer change order's new customer, fall back to parent order)
+      const state = co.new_customer?.state || parent.state;
+      if (state) {
+        const existing = stateMap.get(state) || { state, quantity: 0, totalAmount: 0 };
+        existing.quantity += 1;
+        existing.totalAmount += amount;
+        stateMap.set(state, existing);
+      }
+
+      // Manufacturer
+      const mfr = co.new_building?.manufacturer || parent.manufacturer;
+      if (mfr) {
+        const existing = mfrMap.get(mfr) || { manufacturer: mfr, quantity: 0, totalAmount: 0 };
+        existing.quantity += 1;
+        existing.totalAmount += amount;
+        mfrMap.set(mfr, existing);
+      }
     }
-    const manufacturerData = Array.from(mfrMap.values()).sort((a, b) => b.totalAmount - a.totalAmount);
 
     return NextResponse.json({
       success: true,
       data: {
-        salesRep: salesRepData,
-        state: stateData,
-        manufacturer: manufacturerData,
+        salesRep: Array.from(salesRepMap.values()).sort((a, b) => b.totalAmount - a.totalAmount),
+        state: Array.from(stateMap.values()).sort((a, b) => b.totalAmount - a.totalAmount),
+        manufacturer: Array.from(mfrMap.values()).sort((a, b) => b.totalAmount - a.totalAmount),
       },
     });
   } catch (error) {

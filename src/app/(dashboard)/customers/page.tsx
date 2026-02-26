@@ -1,5 +1,4 @@
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -10,65 +9,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { formatCurrency, formatDate, truncate } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
+import { getCustomerList } from "@/lib/order-process";
 
 interface SearchParams {
   page?: string;
   search?: string;
-}
-
-async function getCustomers(searchParams: SearchParams) {
-  const page = parseInt(searchParams.page || "1", 10);
-  const pageSize = 20;
-  const skip = (page - 1) * pageSize;
-
-  const searchFilter = searchParams.search
-    ? {
-        OR: [
-          { firstName: { contains: searchParams.search } },
-          { lastName: { contains: searchParams.search } },
-          { email: { contains: searchParams.search } },
-        ],
-      }
-    : {};
-
-  const where = {
-    role: { name: "Customer" },
-    ...searchFilter,
-  };
-
-  const [customers, total] = await Promise.all([
-    prisma.user.findMany({
-      where,
-      include: {
-        _count: {
-          select: { customerOrders: true },
-        },
-        customerOrders: {
-          select: {
-            id: true,
-            totalPrice: true,
-            createdAt: true,
-            sentToManufacturer: true,
-          },
-          orderBy: { createdAt: "desc" },
-          take: 5, // Only need latest order + counts, not all orders
-        },
-      },
-      orderBy: { createdAt: "desc" },
-      skip,
-      take: pageSize,
-    }),
-    prisma.user.count({ where }),
-  ]);
-
-  return {
-    customers,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
-  };
 }
 
 export default async function CustomersPage({
@@ -77,8 +23,16 @@ export default async function CustomersPage({
   searchParams: Promise<SearchParams>;
 }) {
   const session = await auth();
+  if (!session) return null;
+
   const params = await searchParams;
-  const { customers, total, page, totalPages } = await getCustomers(params);
+  const page = parseInt(params.page || "1", 10);
+
+  const { customers, total, totalPages } = await getCustomerList({
+    search: params.search,
+    page,
+    pageSize: 20,
+  });
 
   return (
     <div className="space-y-6">
@@ -122,63 +76,43 @@ export default async function CustomersPage({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Customer ID</TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Contact</TableHead>
                     <TableHead>Orders</TableHead>
                     <TableHead>Total Value</TableHead>
+                    <TableHead>Sent to MFR</TableHead>
                     <TableHead>Last Order</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {customers.map((customer) => {
-                    const orderCount = customer._count.customerOrders;
-                    const totalValue = customer.customerOrders.reduce(
-                      (sum, o) => sum + Number(o.totalPrice),
-                      0
-                    );
-                    const lastOrder = customer.customerOrders[0];
-
-                    return (
-                      <TableRow key={customer.id}>
-                        <TableCell>
-                          <Link
-                            href={`/customers/${customer.id}`}
-                            className="font-mono text-xs text-primary hover:underline"
-                          >
-                            {truncate(customer.id, 12)}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          <Link
-                            href={`/customers/${customer.id}`}
-                            className="font-medium hover:underline"
-                          >
-                            {customer.firstName} {customer.lastName}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          <p className="text-sm">{customer.email}</p>
-                          {customer.phone && (
-                            <p className="text-sm text-muted-foreground">
-                              {customer.phone}
-                            </p>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <span>{orderCount}</span>
-                        </TableCell>
-                        <TableCell>
-                          {formatCurrency(totalValue)}
-                        </TableCell>
-                        <TableCell>
-                          {lastOrder
-                            ? formatDate(lastOrder.createdAt)
-                            : "—"}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                  {customers.map((customer) => (
+                    <TableRow key={customer.email}>
+                      <TableCell>
+                        <Link
+                          href={`/customers/${encodeURIComponent(customer.email)}`}
+                          className="font-medium hover:underline"
+                        >
+                          {customer.name}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <p className="text-sm">{customer.email}</p>
+                        {customer.phone && (
+                          <p className="text-sm text-muted-foreground">
+                            {customer.phone}
+                          </p>
+                        )}
+                      </TableCell>
+                      <TableCell>{customer.orderCount}</TableCell>
+                      <TableCell>
+                        {formatCurrency(customer.totalValue)}
+                      </TableCell>
+                      <TableCell>{customer.sentToMfr}</TableCell>
+                      <TableCell>
+                        {formatDate(customer.lastOrderDate)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
 

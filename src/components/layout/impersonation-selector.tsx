@@ -84,9 +84,11 @@ export function ImpersonationSelector() {
         setUsers(employees);
         setFilteredUsers(employees);
       } else {
-        setFetchError("Failed to load employees");
+        console.error("Failed to load employees:", data.error);
+        setFetchError(data.error || "Failed to load employees");
       }
-    } catch {
+    } catch (err) {
+      console.error("Failed to load employees:", err);
       setFetchError("Failed to load employees");
     } finally {
       setFetching(false);

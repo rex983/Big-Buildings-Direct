@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
+import { supabaseAdmin } from "@/lib/supabase";
+import { getOfficeSalesPersons } from "@/lib/order-process";
 
 export async function GET(request: NextRequest) {
   try {
@@ -12,9 +12,10 @@ export async function GET(request: NextRequest) {
 
     const user = session.user;
     const isAdmin = user.roleName === "Admin";
+    const isManager = user.roleName === "Manager";
     const canViewAll = user.permissions.includes("orders.view_all");
 
-    if (!isAdmin && !canViewAll) {
+    if (!isAdmin && !isManager && !canViewAll) {
       return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 });
     }
 
@@ -31,94 +32,121 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const where: Prisma.OrderWhereInput = {};
-    let salesRepId: string | null = null;
-
-    if (filterType === "salesRep") {
-      const nameParts = filterValue.split(" ");
-      const firstName = nameParts[0];
-      const lastName = nameParts.slice(1).join(" ");
-      const rep = await prisma.user.findFirst({
-        where: { firstName, lastName },
-        select: { id: true },
-      });
-      if (!rep) {
-        return NextResponse.json({
-          success: true,
-          data: {
-            totalSales: 0,
-            totalOrderAmount: 0,
-            totalDeposits: 0,
-            totalRevisions: 0,
-          },
-        });
-      }
-      salesRepId = rep.id;
-      where.salesRepId = rep.id;
-    } else if (filterType === "state") {
-      where.deliveryState = filterValue;
-    } else if (filterType === "manufacturer") {
-      where.installer = filterValue;
-    } else {
-      return NextResponse.json(
-        { success: false, error: "Invalid filter type" },
-        { status: 400 }
-      );
+    // Determine office-scoped reps for managers
+    let officeReps: string[] | null = null;
+    if (isManager && user.office) {
+      officeReps = await getOfficeSalesPersons(user.office);
     }
 
-    const dateFilter: Record<string, Date> = {};
+    // Fetch orders from Supabase
+    let query = supabaseAdmin
+      .from("orders")
+      .select("sales_person, customer, building, pricing, payment, paid_at, status, created_at")
+      .neq("status", "cancelled");
+
+    // Apply dimension filter
+    if (filterType === "salesRep") {
+      query = query.eq("sales_person", filterValue);
+    }
+    if (filterType === "state") {
+      query = query.eq("customer->>state", filterValue);
+    }
+    if (filterType === "manufacturer") {
+      query = query.eq("building->>manufacturer", filterValue);
+    }
+
+    // Apply office scope for managers
+    if (officeReps) {
+      query = query.in("sales_person", officeReps);
+    }
+
+    // Date filtering
     if (startDate) {
-      dateFilter.gte = new Date(startDate);
+      query = query.gte("created_at", `${startDate}T00:00:00.000Z`);
     }
     if (endDate) {
       const end = new Date(endDate);
       end.setDate(end.getDate() + 1);
-      dateFilter.lt = end;
+      query = query.lt("created_at", end.toISOString());
     }
 
-    if (Object.keys(dateFilter).length > 0) {
-      where.dateSold = dateFilter;
+    const { data: orders, error } = await query;
+
+    if (error) {
+      console.error("Drilldown query error:", JSON.stringify(error));
+      return NextResponse.json(
+        { success: false, error: "Failed to fetch drilldown data" },
+        { status: 500 }
+      );
     }
 
-    // Build revision-specific where clause
-    const revisionWhere: Prisma.RevisionWhereInput = {};
-    if (filterType === "salesRep" && salesRepId) {
-      revisionWhere.salesRepId = salesRepId;
-    } else if (filterType === "state") {
-      revisionWhere.order = { deliveryState: filterValue };
-    } else if (filterType === "manufacturer") {
-      revisionWhere.OR = [
-        { originalManufacturer: filterValue },
-        { newManufacturer: filterValue },
-      ];
-    }
-    if (Object.keys(dateFilter).length > 0) {
-      revisionWhere.revisionDate = dateFilter;
+    // Aggregate
+    let totalSales = 0;
+    let totalOrderAmount = 0;
+    let totalDeposits = 0;
+
+    for (const row of orders || []) {
+      totalSales += 1;
+      totalOrderAmount += row.pricing?.subtotalBeforeTax || 0;
+
+      const depositPaid =
+        row.payment?.status === "paid" ||
+        row.payment?.status === "manually_approved" ||
+        !!row.paid_at;
+      if (depositPaid) {
+        totalDeposits += row.pricing?.deposit || 0;
+      }
     }
 
-    // Run all aggregations in parallel
-    const [salesAgg, depositAgg, revisionCount] = await Promise.all([
-      prisma.order.aggregate({
-        where: { ...where, status: { not: "CANCELLED" } },
-        _count: { id: true },
-        _sum: { totalPrice: true },
-      }),
-      prisma.order.aggregate({
-        where: { ...where, status: { not: "CANCELLED" }, depositCollected: true },
-        _sum: { depositAmount: true },
-      }),
-      prisma.revision.count({
-        where: revisionWhere,
-      }),
-    ]);
+    // Count change orders (revisions) for this filter
+    let totalRevisions = 0;
+    if (orders && orders.length > 0) {
+      let idQuery = supabaseAdmin
+        .from("orders")
+        .select("id")
+        .neq("status", "cancelled");
+
+      if (filterType === "salesRep") {
+        idQuery = idQuery.eq("sales_person", filterValue);
+      }
+      if (filterType === "state") {
+        idQuery = idQuery.eq("customer->>state", filterValue);
+      }
+      if (filterType === "manufacturer") {
+        idQuery = idQuery.eq("building->>manufacturer", filterValue);
+      }
+      if (officeReps) {
+        idQuery = idQuery.in("sales_person", officeReps);
+      }
+      if (startDate) {
+        idQuery = idQuery.gte("created_at", `${startDate}T00:00:00.000Z`);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setDate(end.getDate() + 1);
+        idQuery = idQuery.lt("created_at", end.toISOString());
+      }
+
+      const { data: orderIds } = await idQuery;
+      const ids = (orderIds || []).map((o) => o.id);
+
+      if (ids.length > 0) {
+        const { count } = await supabaseAdmin
+          .from("change_orders")
+          .select("*", { count: "exact", head: true })
+          .in("order_id", ids)
+          .neq("status", "cancelled");
+        totalRevisions = count || 0;
+      }
+    }
 
     return NextResponse.json({
       success: true,
       data: {
-        totalSales: salesAgg._count.id,
-        totalOrderAmount: salesAgg._sum.totalPrice?.toNumber() || 0,
-        totalDeposits: depositAgg._sum.depositAmount?.toNumber() || 0,
-        totalRevisions: revisionCount,
+        totalSales,
+        totalOrderAmount,
+        totalDeposits,
+        totalRevisions,
       },
     });
   } catch (error) {

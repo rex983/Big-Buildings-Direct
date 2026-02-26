@@ -4,7 +4,7 @@ import { Resend } from "resend";
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const fromAddress = process.env.EMAIL_FROM || "noreply@bigbuildingsdirect.com";
 
-export interface SendEmailOptions {
+interface SendEmailOptions {
   to: string;
   subject: string;
   html: string;
@@ -12,7 +12,7 @@ export interface SendEmailOptions {
   replyTo?: string;
 }
 
-export interface SendEmailResult {
+interface SendEmailResult {
   success: boolean;
   messageId?: string;
   error?: string;
@@ -105,61 +105,6 @@ If you have any questions, please contact us.
 
 Thank you,
 ${companyName}
-    `.trim(),
-  };
-}
-
-export function getWelcomeEmail(params: {
-  firstName: string;
-  loginUrl: string;
-  temporaryPassword?: string;
-}): { subject: string; html: string; text: string } {
-  return {
-    subject: "Welcome to Big Buildings Direct",
-    html: `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: #f8f9fa; border-radius: 8px; padding: 30px; margin-bottom: 20px;">
-            <h1 style="color: #1a1a1a; margin: 0 0 20px 0; font-size: 24px;">Welcome to Big Buildings Direct!</h1>
-            <p style="margin: 0 0 15px 0;">Hello ${params.firstName},</p>
-            <p style="margin: 0 0 15px 0;">Your account has been created. You can now access your customer portal to:</p>
-            <ul style="margin: 0 0 20px 0; padding-left: 20px;">
-              <li>View your order status and history</li>
-              <li>Download documents and files</li>
-              <li>Communicate with our team</li>
-              <li>Sign contracts electronically</li>
-            </ul>
-            ${params.temporaryPassword ? `<p style="margin: 0 0 15px 0; background: #fff3cd; padding: 10px; border-radius: 4px;">Your temporary password is: <strong>${params.temporaryPassword}</strong><br>Please change it after logging in.</p>` : ""}
-            <a href="${params.loginUrl}" style="display: inline-block; background: #2563eb; color: white; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 500;">Access Your Portal</a>
-          </div>
-          <p style="color: #666; font-size: 14px;">If you have any questions, don't hesitate to reach out.</p>
-          <p style="color: #666; font-size: 14px;">Best regards,<br>Big Buildings Direct</p>
-        </body>
-      </html>
-    `,
-    text: `
-Welcome to Big Buildings Direct!
-
-Hello ${params.firstName},
-
-Your account has been created. You can now access your customer portal to:
-- View your order status and history
-- Download documents and files
-- Communicate with our team
-- Sign contracts electronically
-
-${params.temporaryPassword ? `Your temporary password is: ${params.temporaryPassword}\nPlease change it after logging in.\n` : ""}
-Access your portal: ${params.loginUrl}
-
-If you have any questions, don't hesitate to reach out.
-
-Best regards,
-Big Buildings Direct
     `.trim(),
   };
 }
