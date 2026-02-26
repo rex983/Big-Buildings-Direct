@@ -62,7 +62,6 @@ export async function DELETE(
       include: {
         orderFiles: true,
         ticketFiles: true,
-        revisionFiles: true,
       },
     });
 
@@ -101,7 +100,7 @@ export async function DELETE(
         : Promise.resolve(),
     ]);
 
-    // Delete file record (cascade will handle orderFiles, ticketFiles, revisionFiles)
+    // Delete file record (cascade will handle orderFiles, ticketFiles)
     await prisma.file.delete({
       where: { id: fileId },
     });
