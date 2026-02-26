@@ -31,17 +31,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // The action_link points to Supabase's verify endpoint.
-    // We need to rewrite it so the token is consumed by the Order Processing app,
-    // not by Supabase's default site URL.
-    const actionUrl = new URL(data.properties.action_link);
-    const token_hash = actionUrl.searchParams.get("token") || actionUrl.searchParams.get("token_hash");
-    const type = actionUrl.searchParams.get("type") || "magiclink";
-
-    // Build the redirect through Order Processing's auth callback
-    const redirectUrl = `${ORDER_PROCESSING_URL}/auth/confirm?token_hash=${token_hash}&type=${type}`;
-
-    return NextResponse.json({ url: redirectUrl });
+    // action_link points to Supabase's /auth/v1/verify endpoint which
+    // verifies the token and redirects the user to the Order Processing app.
+    return NextResponse.json({ url: data.properties.action_link });
   } catch (err) {
     console.error("Magic link error:", err);
     return NextResponse.json(
