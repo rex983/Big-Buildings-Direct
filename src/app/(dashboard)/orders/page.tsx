@@ -2,19 +2,9 @@ import { auth } from "@/lib/auth";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { formatCurrency, formatDate } from "@/lib/utils";
-import { StatusCheckbox } from "@/components/features/orders/status-checkbox";
 import { getOrders, getOfficeSalesPersons, getOrderFilterOptions } from "@/lib/order-process";
 import { OrdersToolbar } from "@/components/features/orders/orders-toolbar";
+import { OrdersTable } from "@/components/features/orders/orders-table";
 
 interface SearchParams {
   page?: string;
@@ -126,117 +116,7 @@ export default async function OrdersPage({
             </p>
           ) : (
             <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Order #</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>State</TableHead>
-                    <TableHead>Sales Rep</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
-                    <TableHead className="text-right">Deposit</TableHead>
-                    <TableHead className="text-center">Payment</TableHead>
-                    <TableHead className="text-center">Sent to Customer</TableHead>
-                    <TableHead className="text-center">Signed</TableHead>
-                    <TableHead className="text-center">Sent to Mfr</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {orders.map((order) => (
-                    <TableRow key={order.id}>
-                      <TableCell className="font-medium">
-                        {order.orderNumber}
-                        {order.status === "cancelled" && (
-                          <span className="ml-2">
-                            <Badge variant="destructive">Cancelled</Badge>
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p>{order.customerName}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {order.customerEmail}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{order.deliveryState}</TableCell>
-                      <TableCell className="text-sm">{order.salesPerson}</TableCell>
-                      <TableCell className="text-right font-medium">{formatCurrency(order.totalPrice)}</TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatCurrency(order.depositAmount)}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge
-                          variant={
-                            order.paymentStatus === "paid" || order.paymentStatus === "manually_approved"
-                              ? "success"
-                              : order.paymentStatus === "pending"
-                                ? "warning"
-                                : "secondary"
-                          }
-                        >
-                          {order.paymentStatus === "paid"
-                            ? "Paid"
-                            : order.paymentStatus === "manually_approved"
-                              ? "Approved"
-                              : order.paymentStatus === "pending"
-                                ? "Pending"
-                                : "Unpaid"}
-                        </Badge>
-                        {order.paymentType && (
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {order.paymentType === "stripe_already_paid"
-                              ? "Stripe"
-                              : order.paymentType === "check"
-                                ? "Check"
-                                : order.paymentType === "wire"
-                                  ? "Wire"
-                                  : order.paymentType.replace(/_/g, " ")}
-                          </p>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <StatusCheckbox
-                          orderId={order.id}
-                          field="sentToCustomer"
-                          checked={order.sentToCustomer}
-                          canEdit={canEditStatus}
-                          label="Sent to Customer"
-                        />
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <StatusCheckbox
-                          orderId={order.id}
-                          field="customerSigned"
-                          checked={order.customerSigned}
-                          canEdit={canEditStatus}
-                          label="Customer Signed"
-                        />
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <StatusCheckbox
-                          orderId={order.id}
-                          field="sentToManufacturer"
-                          checked={order.sentToManufacturer}
-                          canEdit={canEditStatus}
-                          label="Sent to Manufacturer"
-                        />
-                      </TableCell>
-                      <TableCell>{formatDate(order.createdAt)}</TableCell>
-                      <TableCell>
-                        <Link href={`/orders/${order.id}`}>
-                          <Button variant="ghost" size="sm">
-                            View
-                          </Button>
-                        </Link>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <OrdersTable orders={orders} canEditStatus={canEditStatus} />
 
               {totalPages > 1 && (() => {
                 const pageSize = 20;
