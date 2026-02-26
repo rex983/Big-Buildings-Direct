@@ -20,15 +20,6 @@ export const ActivityType = {
 } as const;
 export type ActivityType = (typeof ActivityType)[keyof typeof ActivityType];
 
-export const DepositChargeStatus = {
-  READY: "Ready",
-  CHARGED: "Charged",
-  DECLINED: "Declined",
-  REFUNDED: "Refunded",
-  ACCEPTED_AFTER_DECLINE: "Accepted After Decline",
-} as const;
-export type DepositChargeStatus = (typeof DepositChargeStatus)[keyof typeof DepositChargeStatus];
-
 // Session types
 export type BaseSessionUser = {
   id: string;
