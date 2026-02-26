@@ -168,14 +168,13 @@ export default async function TeamPage({
                   <TableHead>Orders</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Joined</TableHead>
-                  <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {teamMembers.map((member) => (
-                  <TableRow key={member.id}>
+                  <TableRow key={member.id} className="cursor-pointer hover:bg-muted/50">
                     <TableCell>
-                      <div className="flex items-center gap-3">
+                      <Link href={`/team/${member.id}`} className="flex items-center gap-3">
                         <Avatar
                           src={member.avatar}
                           fallback={getInitials(member.firstName, member.lastName)}
@@ -184,7 +183,7 @@ export default async function TeamPage({
                         <span className="font-medium">
                           {member.firstName} {member.lastName}
                         </span>
-                      </div>
+                      </Link>
                     </TableCell>
                     <TableCell>{member.email}</TableCell>
                     <TableCell>
@@ -200,13 +199,6 @@ export default async function TeamPage({
                       </Badge>
                     </TableCell>
                     <TableCell>{formatDate(member.createdAt)}</TableCell>
-                    <TableCell>
-                      <Link href={`/team/${member.id}`}>
-                        <Button variant="ghost" size="sm">
-                          View
-                        </Button>
-                      </Link>
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
