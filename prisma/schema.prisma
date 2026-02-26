@@ -61,9 +61,6 @@ model User {
   // Revisions (as sales rep)
   revisions Revision[] @relation("RevisionSalesRep")
 
-  // Order Changes (as sales rep)
-  orderChanges OrderChange[] @relation("OrderChangeSalesRep")
-
   // Tickets
   ticketsCreated   Ticket[] @relation("TicketCreator")
   ticketsAssigned  Ticket[] @relation("TicketAssignee")
@@ -247,7 +244,6 @@ model Order {
   messages       Message[]
   emails         Email[]
   revisions      Revision[]
-  orderChanges   OrderChange[]
   tickets        Ticket[]
 
   @@index([orderNumber])
@@ -394,61 +390,6 @@ model Revision {
   @@index([salesRepId])
   @@index([revisionDate])
   @@index([revisionNumber])
-}
-
-// ============================================
-// Order Changes (separate from Revisions)
-// ============================================
-
-model OrderChange {
-  id                  String    @id @default(cuid())
-  changeDate          DateTime
-
-  // Price changes
-  oldOrderTotal       Decimal?
-  newOrderTotal       Decimal?
-  oldDepositTotal     Decimal?
-  newDepositTotal     Decimal?
-  orderTotalDiff      Decimal?
-  depositDiff         Decimal?
-
-  // Customer/Order info
-  orderFormName       String?
-  manufacturer        String?
-  customerEmail       String?
-
-  // Change details
-  changeType          String?   // "Building Update", "Information Update", "Changing Manufacturer", "Other"
-  additionalNotes     String?
-  uploadsUrl          String?   // Google Drive link
-
-  // Deposit charge status
-  depositCharged      String?   // "no charge needed", "Accepted", "Accepted-S", "Refunded", "Refunded-S", etc.
-
-  // Workflow tracking
-  sabrinaProcess      Boolean   @default(false)
-  updatedInNewSale    Boolean   @default(false)
-  rexProcess          String?   // "Complete", etc.
-
-  // Cross-reference fields (from CSV)
-  newSalesRef         String?   // Order number reference
-  revisionsRef        String?   // Revision reference
-  cancellationsRef    String?   // Cancellation reference
-
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-
-  // Relations
-  orderId String
-  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  salesRepId String?
-  salesRep   User?   @relation("OrderChangeSalesRep", fields: [salesRepId], references: [id])
-
-  @@index([orderId])
-  @@index([salesRepId])
-  @@index([changeDate])
-  @@index([changeType])
 }
 
 // ============================================
