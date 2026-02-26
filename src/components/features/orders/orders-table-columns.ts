@@ -34,6 +34,7 @@ export const STORAGE_KEY = "bbd-orders-table-prefs";
 export interface TablePreferences {
   columnOrder: string[];
   columnWidths: Record<string, number>;
+  hiddenColumns: string[];
 }
 
 export function getDefaultPreferences(): TablePreferences {
@@ -42,5 +43,6 @@ export function getDefaultPreferences(): TablePreferences {
     columnWidths: Object.fromEntries(
       [...COLUMNS, ACTIONS_COLUMN].map((c) => [c.id, c.defaultWidth])
     ),
+    hiddenColumns: [],
   };
 }

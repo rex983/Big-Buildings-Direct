@@ -13,14 +13,18 @@ function loadPreferences(): TablePreferences {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return getDefaultPreferences();
-    const parsed = JSON.parse(raw) as TablePreferences;
+    const parsed = JSON.parse(raw) as Partial<TablePreferences>;
     // Validate that all current column IDs are present (handles column additions/removals)
     const defaultIds = COLUMNS.map((c) => c.id);
     const storedIds = new Set(parsed.columnOrder);
     const allPresent = defaultIds.every((id) => storedIds.has(id));
-    const noExtras = parsed.columnOrder.every((id) => defaultIds.includes(id));
+    const noExtras = parsed.columnOrder?.every((id) => defaultIds.includes(id));
     if (!allPresent || !noExtras) return getDefaultPreferences();
-    return parsed;
+    // Default hiddenColumns to [] if missing from stored prefs
+    return {
+      ...parsed,
+      hiddenColumns: Array.isArray(parsed.hiddenColumns) ? parsed.hiddenColumns : [],
+    } as TablePreferences;
   } catch {
     return getDefaultPreferences();
   }
@@ -61,6 +65,17 @@ export function useTablePreferences() {
     });
   }, []);
 
+  const toggleColumnVisibility = useCallback((columnId: string) => {
+    setPrefs((prev) => {
+      const hidden = prev.hiddenColumns.includes(columnId)
+        ? prev.hiddenColumns.filter((id) => id !== columnId)
+        : [...prev.hiddenColumns, columnId];
+      const next = { ...prev, hiddenColumns: hidden };
+      savePreferences(next);
+      return next;
+    });
+  }, []);
+
   const resetPreferences = useCallback(() => {
     const defaults = getDefaultPreferences();
     setPrefs(defaults);
@@ -71,5 +86,5 @@ export function useTablePreferences() {
     }
   }, []);
 
-  return { prefs, setColumnOrder, setColumnWidth, resetPreferences };
+  return { prefs, setColumnOrder, setColumnWidth, toggleColumnVisibility, resetPreferences };
 }

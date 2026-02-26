@@ -19,6 +19,11 @@ import {
   ACTIONS_COLUMN,
   type ColumnDef,
 } from "@/components/features/orders/orders-table-columns";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+} from "@/components/ui/dropdown-menu";
 import { useTablePreferences } from "@/hooks/use-table-preferences";
 import type { DisplayOrder } from "@/types/order-process";
 
@@ -30,7 +35,7 @@ interface OrdersTableProps {
 const columnMap = new Map(COLUMNS.map((c) => [c.id, c]));
 
 export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
-  const { prefs, setColumnOrder, setColumnWidth, resetPreferences } =
+  const { prefs, setColumnOrder, setColumnWidth, toggleColumnVisibility, resetPreferences } =
     useTablePreferences();
 
   // ── Drag-and-drop state ──────────────────────────────────────────────
@@ -138,9 +143,10 @@ export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
   }, [resizingId, setColumnWidth]);
 
   // ── Ordered columns ──────────────────────────────────────────────────
+  const hiddenSet = new Set(prefs.hiddenColumns);
   const orderedColumns: ColumnDef[] = prefs.columnOrder
     .map((id) => columnMap.get(id))
-    .filter((c): c is ColumnDef => !!c);
+    .filter((c): c is ColumnDef => !!c && !hiddenSet.has(c.id));
 
   // ── Cell renderer ────────────────────────────────────────────────────
   function renderCell(columnId: string, order: DisplayOrder) {
@@ -253,7 +259,30 @@ export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
 
   return (
     <div>
-      <div className="flex justify-end mb-2">
+      <div className="flex justify-end gap-2 mb-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              Columns
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48 max-h-72 overflow-y-auto">
+            {COLUMNS.map((col) => (
+              <label
+                key={col.id}
+                className="flex items-center gap-2 px-2 py-1.5 text-sm rounded-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+              >
+                <input
+                  type="checkbox"
+                  checked={!prefs.hiddenColumns.includes(col.id)}
+                  onChange={() => toggleColumnVisibility(col.id)}
+                  className="accent-primary"
+                />
+                {col.label}
+              </label>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button variant="ghost" size="sm" onClick={resetPreferences}>
           Reset columns
         </Button>
