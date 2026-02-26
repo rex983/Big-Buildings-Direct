@@ -179,19 +179,29 @@ export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
         return <span className="font-medium">{formatCurrency(order.totalPrice)}</span>;
       case "deposit":
         return <span className="font-medium">{formatCurrency(order.depositAmount)}</span>;
-      case "payment":
+      case "payment": {
+        const isPaid = order.paymentStatus === "paid" || order.paymentStatus === "manually_approved";
+        const isPending = order.paymentStatus === "pending";
         return (
           <>
-            <Badge
-              variant={
-                order.paymentStatus === "paid" ||
-                order.paymentStatus === "manually_approved"
-                  ? "success"
-                  : order.paymentStatus === "pending"
-                    ? "warning"
-                    : "secondary"
-              }
+            <span
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                isPaid
+                  ? "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300"
+                  : isPending
+                    ? "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300"
+                    : "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300"
+              }`}
             >
+              {isPaid ? (
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <circle cx="12" cy="12" r="4" />
+                </svg>
+              )}
               {order.paymentStatus === "paid"
                 ? "Paid"
                 : order.paymentStatus === "manually_approved"
@@ -199,7 +209,7 @@ export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
                   : order.paymentStatus === "pending"
                     ? "Pending"
                     : "Unpaid"}
-            </Badge>
+            </span>
             {order.paymentType && (
               <p className="text-xs text-muted-foreground mt-0.5">
                 {order.paymentType === "stripe_already_paid"
@@ -213,6 +223,7 @@ export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
             )}
           </>
         );
+      }
       case "sentToCustomer":
         return (
           <StatusCheckbox
