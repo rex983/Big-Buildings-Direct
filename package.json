@@ -54,6 +54,7 @@
     "csv-parse": "^6.1.0",
     "eslint": "^9.39.2",
     "eslint-config-next": "^16.1.6",
+    "pg": "^8.19.0",
     "prettier": "^3.8.1",
     "tsx": "^4.21.0"
   }
