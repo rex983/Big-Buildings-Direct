@@ -105,6 +105,18 @@ interface OrderListOptions {
   salesPersons?: string[];
   /** If true, exclude cancelled orders */
   excludeCancelled?: boolean;
+  /** Sort field */
+  sortBy?: string;
+  /** Sort direction */
+  sortDir?: "asc" | "desc";
+  /** Filter by payment status */
+  paymentStatus?: string;
+  /** Filter by state */
+  state?: string;
+  /** Filter by installer/manufacturer */
+  installer?: string;
+  /** Filter by specific sales rep name (user-chosen filter, separate from scope) */
+  salesRepFilter?: string;
 }
 
 interface PaginatedOrders {
@@ -144,7 +156,41 @@ export async function getOrders(
     );
   }
 
-  query = query.order("created_at", { ascending: false }).range(from, to);
+  // Additional filters
+  if (opts.paymentStatus) {
+    if (opts.paymentStatus === "paid") {
+      query = query.or("payment->>status.eq.paid,payment->>status.eq.manually_approved");
+    } else if (opts.paymentStatus === "pending") {
+      query = query.eq("payment->>status", "pending");
+    } else if (opts.paymentStatus === "unpaid") {
+      query = query.or("payment->>status.is.null,payment->>status.eq.unpaid");
+    }
+  }
+  if (opts.state) {
+    query = query.ilike("customer->>state", opts.state);
+  }
+  if (opts.installer) {
+    query = query.ilike("building->>manufacturer", opts.installer);
+  }
+  if (opts.salesRepFilter) {
+    query = query.ilike("sales_person", opts.salesRepFilter);
+  }
+
+  // Sort
+  const sortField = opts.sortBy || "created_at";
+  const ascending = opts.sortDir === "asc";
+
+  const sortMap: Record<string, string> = {
+    orderNumber: "order_number",
+    created_at: "created_at",
+    customerName: "customer->>lastName",
+    totalPrice: "pricing->>subtotalBeforeTax",
+    depositAmount: "pricing->>deposit",
+    state: "customer->>state",
+    salesPerson: "sales_person",
+  };
+
+  query = query.order(sortMap[sortField] || "created_at", { ascending }).range(from, to);
 
   const { data, count, error } = await query;
 
@@ -162,6 +208,41 @@ export async function getOrders(
     page,
     pageSize,
     totalPages: Math.ceil(total / pageSize),
+  };
+}
+
+/** Get distinct filter values for the orders toolbar. */
+export async function getOrderFilterOptions(): Promise<{
+  states: string[];
+  installers: string[];
+  salesReps: string[];
+}> {
+  const { data, error } = await supabaseAdmin
+    .from(TABLE)
+    .select("customer->>state, building->>manufacturer, sales_person");
+
+  if (error) {
+    console.error("getOrderFilterOptions error:", error);
+    return { states: [], installers: [], salesReps: [] };
+  }
+
+  const stateSet = new Set<string>();
+  const installerSet = new Set<string>();
+  const repSet = new Set<string>();
+
+  for (const row of data || []) {
+    const state = (row as Record<string, string>).state;
+    const mfr = (row as Record<string, string>).manufacturer;
+    const rep = (row as Record<string, string>).sales_person;
+    if (state) stateSet.add(state);
+    if (mfr) installerSet.add(mfr);
+    if (rep) repSet.add(rep);
+  }
+
+  return {
+    states: [...stateSet].sort(),
+    installers: [...installerSet].sort(),
+    salesReps: [...repSet].sort(),
   };
 }
 

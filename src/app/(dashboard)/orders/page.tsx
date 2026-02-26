@@ -13,11 +13,18 @@ import {
 } from "@/components/ui/table";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { StatusCheckbox } from "@/components/features/orders/status-checkbox";
-import { getOrders, getOfficeSalesPersons } from "@/lib/order-process";
+import { getOrders, getOfficeSalesPersons, getOrderFilterOptions } from "@/lib/order-process";
+import { OrdersToolbar } from "@/components/features/orders/orders-toolbar";
 
 interface SearchParams {
   page?: string;
   search?: string;
+  status?: string;
+  payment?: string;
+  sort?: string;
+  state?: string;
+  installer?: string;
+  rep?: string;
 }
 
 export default async function OrdersPage({
@@ -48,15 +55,29 @@ export default async function OrdersPage({
     salesPerson = `${user.firstName} ${user.lastName}`;
   }
 
-  const result = await getOrders({
-    page,
-    pageSize: 10,
-    search: params.search,
-    salesPerson,
-    salesPersons,
-  });
+  // Parse sort param
+  const [sortBy, sortDir] = (params.sort || "created_at:desc").split(":");
+
+  const [result, filterOptions] = await Promise.all([
+    getOrders({
+      page,
+      pageSize: 20,
+      search: params.search,
+      salesPerson,
+      salesPersons,
+      status: params.status as import("@/types/order-process").OPOrderStatus | undefined,
+      paymentStatus: params.payment,
+      state: params.state,
+      installer: params.installer,
+      salesRepFilter: params.rep,
+      sortBy,
+      sortDir: sortDir as "asc" | "desc",
+    }),
+    getOrderFilterOptions(),
+  ]);
 
   const { orders, total, totalPages } = result;
+  const showSalesRepFilter = isAdminUser || isManager || canViewAll;
 
   // Statuses are managed by Order Processing — read-only in BBD
   const canEditStatus = false;
@@ -74,20 +95,28 @@ export default async function OrdersPage({
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>All Orders</CardTitle>
-            <form className="flex items-center gap-2">
-              <input
-                type="text"
-                name="search"
-                placeholder="Search orders..."
-                defaultValue={params.search}
-                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
-              />
-              <Button type="submit" size="sm">
-                Search
-              </Button>
-            </form>
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <CardTitle>All Orders ({total})</CardTitle>
+              <form className="flex items-center gap-2">
+                <input
+                  type="text"
+                  name="search"
+                  placeholder="Search orders..."
+                  defaultValue={params.search}
+                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                />
+                <Button type="submit" size="sm">
+                  Search
+                </Button>
+              </form>
+            </div>
+            <OrdersToolbar
+              states={filterOptions.states}
+              installers={filterOptions.installers}
+              salesReps={filterOptions.salesReps}
+              showSalesRepFilter={showSalesRepFilter}
+            />
           </div>
         </CardHeader>
         <CardContent>
@@ -102,7 +131,8 @@ export default async function OrdersPage({
                   <TableRow>
                     <TableHead>Order #</TableHead>
                     <TableHead>Customer</TableHead>
-                    <TableHead>Building</TableHead>
+                    <TableHead>State</TableHead>
+                    <TableHead>Sales Rep</TableHead>
                     <TableHead className="text-right">Total</TableHead>
                     <TableHead className="text-right">Deposit</TableHead>
                     <TableHead className="text-center">Payment</TableHead>
@@ -132,14 +162,8 @@ export default async function OrdersPage({
                           </p>
                         </div>
                       </TableCell>
-                      <TableCell>
-                        <div>
-                          <p>{order.buildingType}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {order.buildingSize}
-                          </p>
-                        </div>
-                      </TableCell>
+                      <TableCell>{order.deliveryState}</TableCell>
+                      <TableCell className="text-sm">{order.salesPerson}</TableCell>
                       <TableCell className="text-right font-medium">{formatCurrency(order.totalPrice)}</TableCell>
                       <TableCell className="text-right font-medium">
                         {formatCurrency(order.depositAmount)}
@@ -214,25 +238,42 @@ export default async function OrdersPage({
                 </TableBody>
               </Table>
 
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4">
-                  <p className="text-sm text-muted-foreground">
-                    Showing {(page - 1) * 10 + 1} to {Math.min(page * 10, total)} of {total} orders
-                  </p>
-                  <div className="flex gap-2">
-                    {page > 1 && (
-                      <Link href={`/orders?page=${page - 1}&search=${params.search || ""}`}>
-                        <Button variant="outline" size="sm">Previous</Button>
-                      </Link>
-                    )}
-                    {page < totalPages && (
-                      <Link href={`/orders?page=${page + 1}&search=${params.search || ""}`}>
-                        <Button variant="outline" size="sm">Next</Button>
-                      </Link>
-                    )}
+              {totalPages > 1 && (() => {
+                const pageSize = 20;
+                const buildPageUrl = (p: number) => {
+                  const qp = new URLSearchParams();
+                  if (p > 1) qp.set("page", String(p));
+                  if (params.search) qp.set("search", params.search);
+                  if (params.status) qp.set("status", params.status);
+                  if (params.payment) qp.set("payment", params.payment);
+                  if (params.sort && params.sort !== "created_at:desc") qp.set("sort", params.sort);
+                  if (params.state) qp.set("state", params.state);
+                  if (params.installer) qp.set("installer", params.installer);
+                  if (params.rep) qp.set("rep", params.rep);
+                  const qs = qp.toString();
+                  return `/orders${qs ? `?${qs}` : ""}`;
+                };
+
+                return (
+                  <div className="flex items-center justify-between mt-4">
+                    <p className="text-sm text-muted-foreground">
+                      Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, total)} of {total} orders
+                    </p>
+                    <div className="flex gap-2">
+                      {page > 1 && (
+                        <Link href={buildPageUrl(page - 1)}>
+                          <Button variant="outline" size="sm">Previous</Button>
+                        </Link>
+                      )}
+                      {page < totalPages && (
+                        <Link href={buildPageUrl(page + 1)}>
+                          <Button variant="outline" size="sm">Next</Button>
+                        </Link>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </>
           )}
         </CardContent>
