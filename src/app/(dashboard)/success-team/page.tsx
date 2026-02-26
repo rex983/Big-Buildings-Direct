@@ -256,7 +256,7 @@ export default async function SuccessTeamPage({
                           </div>
                         </TableCell>
                         <TableCell>
-                          {order.installer || (
+                          {order.manufacturer || (
                             <span className="text-muted-foreground">Not assigned</span>
                           )}
                         </TableCell>
@@ -300,9 +300,9 @@ export default async function SuccessTeamPage({
                           />
                         </TableCell>
                         <TableCell>
-                          {order.salesRep ? (
+                          {order.salesPerson ? (
                             <span className="text-sm">
-                              {order.salesRep.firstName} {order.salesRep.lastName}
+                              {order.salesPerson}
                             </span>
                           ) : (
                             <span className="text-muted-foreground">-</span>
@@ -713,7 +713,7 @@ export default async function SuccessTeamPage({
                           </div>
                         </TableCell>
                         <TableCell>
-                          {order.installer || (
+                          {order.manufacturer || (
                             <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
@@ -732,9 +732,9 @@ export default async function SuccessTeamPage({
                           </div>
                         </TableCell>
                         <TableCell>
-                          {order.salesRep ? (
+                          {order.salesPerson ? (
                             <span className="text-sm">
-                              {order.salesRep.firstName} {order.salesRep.lastName}
+                              {order.salesPerson}
                             </span>
                           ) : (
                             <span className="text-muted-foreground">-</span>

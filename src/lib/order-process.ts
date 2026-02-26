@@ -33,7 +33,7 @@ export async function getOfficeSalesPersons(office: string): Promise<string[]> {
 // ── Mapping helpers ───────────────────────────────────────────────────
 
 /** Convert a raw Order Process DB row to a BBD display-friendly object. */
-function mapToDisplay(row: OPOrderRow): DisplayOrder {
+export function mapToDisplay(row: OPOrderRow): DisplayOrder {
   const statusIndex = OP_STATUS_ORDER.indexOf(row.status);
   const isCancelled = row.status === "cancelled";
 
@@ -83,6 +83,10 @@ function mapToDisplay(row: OPOrderRow): DisplayOrder {
     dateSold: row.created_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    wcStatus: row.wc_status ?? null,
+    wcStatusDate: row.wc_status_date ?? null,
+    lppStatus: row.lpp_status ?? null,
+    lppStatusDate: row.lpp_status_date ?? null,
     currentStage: OP_STAGE_MAP[row.status] || OP_STAGE_MAP.draft,
     files: row.files || { renderings: [], extraFiles: [], installerFiles: [] },
     ledgerSummary: row.ledger_summary || null,
@@ -720,6 +724,40 @@ export async function updateOrderField(
         paid_at: null,
         updated_at: new Date().toISOString(),
       })
+      .eq("id", orderId);
+
+    if (error) throw new Error(`updateOrderField error: ${error.message}`);
+    return;
+  }
+
+  if (field === "wcStatus") {
+    const now = new Date().toISOString();
+    const updateData: Record<string, unknown> = {
+      wc_status: value,
+      wc_status_date: now,
+      updated_at: now,
+    };
+
+    const { error } = await supabaseAdmin
+      .from(TABLE)
+      .update(updateData)
+      .eq("id", orderId);
+
+    if (error) throw new Error(`updateOrderField error: ${error.message}`);
+    return;
+  }
+
+  if (field === "lppStatus") {
+    const now = new Date().toISOString();
+    const updateData: Record<string, unknown> = {
+      lpp_status: value,
+      lpp_status_date: now,
+      updated_at: now,
+    };
+
+    const { error } = await supabaseAdmin
+      .from(TABLE)
+      .update(updateData)
       .eq("id", orderId);
 
     if (error) throw new Error(`updateOrderField error: ${error.message}`);

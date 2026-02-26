@@ -136,6 +136,10 @@ export interface OPOrderRow {
   total_deposit_difference?: number;
   additional_deposit_due?: number;
   refund_due?: number;
+  wc_status?: string;
+  wc_status_date?: string;
+  lpp_status?: string;
+  lpp_status_date?: string;
 }
 
 // ── Display-friendly shape consumed by BBD pages ──────────────────────
@@ -183,6 +187,10 @@ export interface DisplayOrder {
   createdAt: string;
   updatedAt: string;
   currentStage: OrderStageDisplay;
+  wcStatus: string | null;
+  wcStatusDate: string | null;
+  lppStatus: string | null;
+  lppStatusDate: string | null;
   files: OPOrderFiles;
   ledgerSummary: OPLedgerSummary | null;
   /** Raw Order Process row for advanced usage */

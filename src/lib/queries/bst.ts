@@ -1,4 +1,8 @@
 import { prisma } from "@/lib/prisma";
+import { supabaseAdmin } from "@/lib/supabase";
+import { mapToDisplay } from "@/lib/order-process";
+import type { OPOrderRow } from "@/types/order-process";
+import type { DisplayOrder } from "@/types/order-process";
 import type { BstStageCounts } from "@/components/features/orders/bst-pipeline-cards";
 
 // ============ Constants ============
@@ -63,26 +67,33 @@ export interface TabCounts {
 
 // ============ Helpers ============
 
-export function buildBstStageFilter(bstStage?: string) {
+const TABLE = "orders";
+
+/**
+ * Apply BST stage filter to a Supabase query builder.
+ * Returns the query with the appropriate wc_status / lpp_status filters chained.
+ */
+function applyBstStageFilter<T extends { eq: Function; is: Function; or: Function }>(
+  query: T,
+  bstStage?: string,
+): T {
   switch (bstStage) {
     case "stmPending":
-      return { wcStatus: null };
+      return query.is("wc_status", null) as T;
     case "wcPending":
-      return { wcStatus: "Pending" };
+      return query.eq("wc_status", "Pending") as T;
     case "noContactMade":
-      return { wcStatus: "No Contact Made" };
+      return query.eq("wc_status", "No Contact Made") as T;
     case "wcDoneLpp":
-      return {
-        wcStatus: "Contact Made",
-        OR: [{ lppStatus: null }, { lppStatus: "Pending" }],
-      };
+      return query
+        .eq("wc_status", "Contact Made")
+        .or("lpp_status.is.null,lpp_status.eq.Pending") as T;
     case "readyToInstall":
-      return {
-        wcStatus: "Contact Made",
-        lppStatus: "Ready for Install",
-      };
+      return query
+        .eq("wc_status", "Contact Made")
+        .eq("lpp_status", "Ready for Install") as T;
     default:
-      return {};
+      return query;
   }
 }
 
@@ -102,56 +113,39 @@ export function getBstStageLabel(wcStatus: string | null, lppStatus: string | nu
 export async function getManufacturerOrders(params: PipelineSearchParams) {
   const page = parseInt(params.page || "1", 10);
   const pageSize = 20;
-  const skip = (page - 1) * pageSize;
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
 
-  const searchFilter = params.search
-    ? {
-        OR: [
-          { orderNumber: { contains: params.search } },
-          { customerName: { contains: params.search } },
-          { customerEmail: { contains: params.search } },
-          { installer: { contains: params.search } },
-        ],
-      }
-    : {};
+  let query = supabaseAdmin
+    .from(TABLE)
+    .select("*", { count: "exact" })
+    .eq("status", "ready_for_manufacturer");
 
-  const bstStageFilter = buildBstStageFilter(params.bstStage);
+  // Apply BST stage filter
+  query = applyBstStageFilter(query, params.bstStage);
 
-  let where: Record<string, unknown>;
-  if ("OR" in bstStageFilter) {
-    const { OR, ...rest } = bstStageFilter;
-    where = {
-      sentToManufacturer: true,
-      status: { not: "CANCELLED" },
-      ...searchFilter,
-      ...rest,
-      OR,
-    };
-  } else {
-    where = {
-      sentToManufacturer: true,
-      status: { not: "CANCELLED" },
-      ...searchFilter,
-      ...bstStageFilter,
-    };
+  // Search
+  if (params.search) {
+    const term = `%${params.search}%`;
+    query = query.or(
+      `order_number.ilike.${term},sales_person.ilike.${term},customer->>email.ilike.${term},customer->>firstName.ilike.${term},customer->>lastName.ilike.${term},building->>manufacturer.ilike.${term}`
+    );
   }
 
-  const [orders, total] = await Promise.all([
-    prisma.order.findMany({
-      where,
-      include: {
-        currentStage: true,
-        salesRep: { select: { firstName: true, lastName: true, email: true } },
-      },
-      orderBy: { sentToManufacturerDate: "desc" },
-      skip,
-      take: pageSize,
-    }),
-    prisma.order.count({ where }),
-  ]);
+  query = query.order("ready_for_manufacturer_at", { ascending: false }).range(from, to);
+
+  const { data, count, error } = await query;
+
+  if (error) {
+    console.error("getManufacturerOrders error:", error);
+    throw new Error(`Failed to fetch manufacturer orders: ${error.message}`);
+  }
+
+  const rows = (data || []) as OPOrderRow[];
+  const total = count || 0;
 
   return {
-    orders,
+    orders: rows.map(mapToDisplay),
     total,
     page,
     pageSize,
@@ -160,105 +154,66 @@ export async function getManufacturerOrders(params: PipelineSearchParams) {
 }
 
 export async function getBstStageCounts(): Promise<BstStageCounts> {
-  // Use two groupBy queries instead of 5 separate count queries
-  const [wcGroups, lppGroups] = await Promise.all([
-    prisma.order.groupBy({
-      by: ["wcStatus"],
-      where: {
-        sentToManufacturer: true,
-        status: { not: "CANCELLED" },
-      },
-      _count: { id: true },
-    }),
-    // For Contact Made orders, also group by lppStatus
-    prisma.order.groupBy({
-      by: ["lppStatus"],
-      where: {
-        sentToManufacturer: true,
-        status: { not: "CANCELLED" },
-        wcStatus: "Contact Made",
-      },
-      _count: { id: true },
-    }),
-  ]);
+  const baseFilter = () =>
+    supabaseAdmin
+      .from(TABLE)
+      .select("*", { count: "exact", head: true })
+      .eq("status", "ready_for_manufacturer");
 
-  const wcMap = new Map(wcGroups.map((g) => [g.wcStatus, g._count.id]));
-  const lppMap = new Map(lppGroups.map((g) => [g.lppStatus, g._count.id]));
-
-  const readyToInstall = lppMap.get("Ready for Install") ?? 0;
-  const contactMadeTotal = wcMap.get("Contact Made") ?? 0;
+  const [stmPending, wcPending, noContactMade, wcDoneLpp, readyToInstall] =
+    await Promise.all([
+      // Stage 1: wc_status IS NULL
+      baseFilter().is("wc_status", null),
+      // Stage 2: wc_status = 'Pending'
+      baseFilter().eq("wc_status", "Pending"),
+      // Stage 3: wc_status = 'No Contact Made'
+      baseFilter().eq("wc_status", "No Contact Made"),
+      // Stage 4: wc_status = 'Contact Made', lpp_status IS NULL or 'Pending'
+      baseFilter()
+        .eq("wc_status", "Contact Made")
+        .or("lpp_status.is.null,lpp_status.eq.Pending"),
+      // Stage 5: wc_status = 'Contact Made', lpp_status = 'Ready for Install'
+      baseFilter()
+        .eq("wc_status", "Contact Made")
+        .eq("lpp_status", "Ready for Install"),
+    ]);
 
   return {
-    stmPending: wcMap.get(null as unknown as string) ?? 0,
-    wcPending: wcMap.get("Pending") ?? 0,
-    noContactMade: wcMap.get("No Contact Made") ?? 0,
-    wcDoneLpp: contactMadeTotal - readyToInstall,
-    readyToInstall,
+    stmPending: stmPending.count ?? 0,
+    wcPending: wcPending.count ?? 0,
+    noContactMade: noContactMade.count ?? 0,
+    wcDoneLpp: wcDoneLpp.count ?? 0,
+    readyToInstall: readyToInstall.count ?? 0,
   };
 }
 
 export async function getWcStageOrders() {
-  const baseWhere = {
-    sentToManufacturer: true,
-    status: { not: "CANCELLED" as const },
-  };
+  const baseQuery = () =>
+    supabaseAdmin
+      .from(TABLE)
+      .select("*")
+      .eq("status", "ready_for_manufacturer")
+      .order("ready_for_manufacturer_at", { ascending: false })
+      .limit(100);
 
-  const orderSelect = {
-    id: true,
-    orderNumber: true,
-    customerName: true,
-    customerEmail: true,
-    customerPhone: true,
-    buildingType: true,
-    buildingSize: true,
-    installer: true,
-    wcStatus: true,
-    lppStatus: true,
-    sentToManufacturerDate: true,
-    salesRep: { select: { firstName: true, lastName: true } },
-  };
-
-  const [stmPendingOrders, wcPendingOrders, noContactMadeOrders] = await Promise.all([
-    prisma.order.findMany({
-      where: { ...baseWhere, wcStatus: null },
-      select: orderSelect,
-      orderBy: { sentToManufacturerDate: "desc" },
-      take: 100,
-    }),
-    prisma.order.findMany({
-      where: { ...baseWhere, wcStatus: "Pending" },
-      select: orderSelect,
-      orderBy: { sentToManufacturerDate: "desc" },
-      take: 100,
-    }),
-    prisma.order.findMany({
-      where: { ...baseWhere, wcStatus: "No Contact Made" },
-      select: orderSelect,
-      orderBy: { sentToManufacturerDate: "desc" },
-      take: 100,
-    }),
+  const [stmRes, wcRes, ncRes] = await Promise.all([
+    baseQuery().is("wc_status", null),
+    baseQuery().eq("wc_status", "Pending"),
+    baseQuery().eq("wc_status", "No Contact Made"),
   ]);
 
-  return { stmPendingOrders, wcPendingOrders, noContactMadeOrders };
+  if (stmRes.error) throw new Error(`getWcStageOrders stm error: ${stmRes.error.message}`);
+  if (wcRes.error) throw new Error(`getWcStageOrders wc error: ${wcRes.error.message}`);
+  if (ncRes.error) throw new Error(`getWcStageOrders nc error: ${ncRes.error.message}`);
+
+  return {
+    stmPendingOrders: ((stmRes.data || []) as OPOrderRow[]).map(mapToDisplay),
+    wcPendingOrders: ((wcRes.data || []) as OPOrderRow[]).map(mapToDisplay),
+    noContactMadeOrders: ((ncRes.data || []) as OPOrderRow[]).map(mapToDisplay),
+  };
 }
 
 // ============ Tickets Queries ============
-
-// Sort order maps for status and priority
-const statusOrder: Record<string, number> = {
-  OPEN: 0,
-  IN_PROGRESS: 1,
-  PENDING: 2,
-  RESOLVED: 3,
-  CLOSED: 4,
-};
-
-const priorityOrder: Record<string, number> = {
-  URGENT: 0,
-  HIGH: 1,
-  NORMAL: 2,
-  LOW: 3,
-};
 
 export async function getTickets(params: TicketSearchParams, userId: string) {
   const page = parseInt(params.tpage || "1", 10);
@@ -389,39 +344,35 @@ export async function getTicketStats(userId: string) {
 export async function getCancelledOrders(params: CancellationSearchParams) {
   const page = parseInt(params.cpage || "1", 10);
   const pageSize = 20;
-  const skip = (page - 1) * pageSize;
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
 
-  const searchFilter = params.csearch
-    ? {
-        OR: [
-          { orderNumber: { contains: params.csearch } },
-          { customerName: { contains: params.csearch } },
-          { installer: { contains: params.csearch } },
-          { cancelReason: { contains: params.csearch } },
-        ],
-      }
-    : {};
+  let query = supabaseAdmin
+    .from(TABLE)
+    .select("*", { count: "exact" })
+    .eq("status", "cancelled");
 
-  const where = {
-    status: "CANCELLED",
-    ...searchFilter,
-  };
+  if (params.csearch) {
+    const term = `%${params.csearch}%`;
+    query = query.or(
+      `order_number.ilike.${term},sales_person.ilike.${term},customer->>firstName.ilike.${term},customer->>lastName.ilike.${term},building->>manufacturer.ilike.${term},cancel_reason.ilike.${term}`
+    );
+  }
 
-  const [orders, total] = await Promise.all([
-    prisma.order.findMany({
-      where,
-      include: {
-        salesRep: { select: { firstName: true, lastName: true } },
-      },
-      orderBy: { cancelledAt: "desc" },
-      skip,
-      take: pageSize,
-    }),
-    prisma.order.count({ where }),
-  ]);
+  query = query.order("cancelled_at", { ascending: false, nullsFirst: false }).range(from, to);
+
+  const { data, count, error } = await query;
+
+  if (error) {
+    console.error("getCancelledOrders error:", error);
+    throw new Error(`Failed to fetch cancelled orders: ${error.message}`);
+  }
+
+  const rows = (data || []) as OPOrderRow[];
+  const total = count || 0;
 
   return {
-    orders,
+    orders: rows.map(mapToDisplay),
     total,
     page,
     pageSize,
@@ -431,38 +382,56 @@ export async function getCancelledOrders(params: CancellationSearchParams) {
 
 export async function getCancellationStats() {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
   const startOfWeek = new Date(now);
   startOfWeek.setDate(now.getDate() - now.getDay());
   startOfWeek.setHours(0, 0, 0, 0);
+  const startOfWeekISO = startOfWeek.toISOString();
 
-  const [total, thisMonth, thisWeek] = await Promise.all([
-    prisma.order.count({ where: { status: "CANCELLED" } }),
-    prisma.order.count({
-      where: { status: "CANCELLED", cancelledAt: { gte: startOfMonth } },
-    }),
-    prisma.order.count({
-      where: { status: "CANCELLED", cancelledAt: { gte: startOfWeek } },
-    }),
+  const [totalRes, thisMonthRes, thisWeekRes] = await Promise.all([
+    supabaseAdmin
+      .from(TABLE)
+      .select("*", { count: "exact", head: true })
+      .eq("status", "cancelled"),
+    supabaseAdmin
+      .from(TABLE)
+      .select("*", { count: "exact", head: true })
+      .eq("status", "cancelled")
+      .gte("cancelled_at", startOfMonth),
+    supabaseAdmin
+      .from(TABLE)
+      .select("*", { count: "exact", head: true })
+      .eq("status", "cancelled")
+      .gte("cancelled_at", startOfWeekISO),
   ]);
 
-  return { total, thisMonth, thisWeek };
+  return {
+    total: totalRes.count ?? 0,
+    thisMonth: thisMonthRes.count ?? 0,
+    thisWeek: thisWeekRes.count ?? 0,
+  };
 }
 
 // ============ Tab Counts (lightweight) ============
 
 export async function getTabCounts(userId: string): Promise<TabCounts> {
-  const [pipeline, tickets, cancellations] = await Promise.all([
-    prisma.order.count({
-      where: { sentToManufacturer: true, status: { not: "CANCELLED" } },
-    }),
+  const [pipelineRes, tickets, cancellationsRes] = await Promise.all([
+    supabaseAdmin
+      .from(TABLE)
+      .select("*", { count: "exact", head: true })
+      .eq("status", "ready_for_manufacturer"),
     prisma.ticket.count({
       where: { status: { notIn: ["RESOLVED", "CLOSED"] } },
     }),
-    prisma.order.count({
-      where: { status: "CANCELLED" },
-    }),
+    supabaseAdmin
+      .from(TABLE)
+      .select("*", { count: "exact", head: true })
+      .eq("status", "cancelled"),
   ]);
 
-  return { pipeline, tickets, cancellations };
+  return {
+    pipeline: pipelineRes.count ?? 0,
+    tickets,
+    cancellations: cancellationsRes.count ?? 0,
+  };
 }

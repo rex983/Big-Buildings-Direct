@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requirePermission, isAdmin } from "@/lib/auth";
 import { getOrder, updateOrderField } from "@/lib/order-process";
+import { prisma } from "@/lib/prisma";
 
 export async function GET(
   request: NextRequest,
@@ -73,6 +74,27 @@ export async function PATCH(
     const { field, value } = body;
     if (field && value !== undefined) {
       await updateOrderField(orderId, field, value);
+
+      // Dual-write BST status fields to Prisma so ticket pages that join on
+      // Prisma Order stay consistent
+      if (field === "wcStatus" || field === "lppStatus") {
+        try {
+          const prismaOrder = await prisma.order.findFirst({
+            where: { orderNumber: order.orderNumber },
+            select: { id: true },
+          });
+          if (prismaOrder) {
+            await prisma.order.update({
+              where: { id: prismaOrder.id },
+              data: { [field]: value },
+            });
+          }
+        } catch (e) {
+          // Log but don't fail the request — Supabase is source of truth
+          console.error("Dual-write to Prisma failed:", e);
+        }
+      }
+
       const updated = await getOrder(orderId);
       return NextResponse.json({ success: true, data: updated });
     }

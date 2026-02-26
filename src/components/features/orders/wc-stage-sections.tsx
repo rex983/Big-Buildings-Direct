@@ -17,26 +17,12 @@ import {
 } from "@/components/ui/table";
 import { StatusSelect } from "./status-select";
 import { formatDate } from "@/lib/utils";
-
-interface Order {
-  id: string;
-  orderNumber: string;
-  customerName: string;
-  customerEmail: string;
-  customerPhone: string | null;
-  buildingType: string;
-  buildingSize: string;
-  installer: string | null;
-  wcStatus: string | null;
-  lppStatus: string | null;
-  sentToManufacturerDate: Date | null;
-  salesRep: { firstName: string; lastName: string } | null;
-}
+import type { DisplayOrder } from "@/types/order-process";
 
 interface WcStageSectionsProps {
-  stmPendingOrders: Order[];
-  wcPendingOrders: Order[];
-  noContactMadeOrders: Order[];
+  stmPendingOrders: DisplayOrder[];
+  wcPendingOrders: DisplayOrder[];
+  noContactMadeOrders: DisplayOrder[];
   canEdit: boolean;
 }
 
@@ -93,7 +79,7 @@ const stages: StageConfig[] = [
   },
 ];
 
-function OrdersTable({ orders, canEdit }: { orders: Order[]; canEdit: boolean }) {
+function OrdersTable({ orders, canEdit }: { orders: DisplayOrder[]; canEdit: boolean }) {
   if (orders.length === 0) {
     return (
       <p className="text-center text-muted-foreground py-4">
@@ -137,7 +123,7 @@ function OrdersTable({ orders, canEdit }: { orders: Order[]; canEdit: boolean })
               </div>
             </TableCell>
             <TableCell>
-              {order.installer || (
+              {order.manufacturer || (
                 <span className="text-muted-foreground">Not assigned</span>
               )}
             </TableCell>
@@ -162,9 +148,9 @@ function OrdersTable({ orders, canEdit }: { orders: Order[]; canEdit: boolean })
               />
             </TableCell>
             <TableCell>
-              {order.salesRep ? (
+              {order.salesPerson ? (
                 <span className="text-sm">
-                  {order.salesRep.firstName} {order.salesRep.lastName}
+                  {order.salesPerson}
                 </span>
               ) : (
                 <span className="text-muted-foreground">-</span>
@@ -195,7 +181,7 @@ export function WcStageSections({
   noContactMadeOrders,
   canEdit,
 }: WcStageSectionsProps) {
-  const ordersByStage: Record<string, Order[]> = {
+  const ordersByStage: Record<string, DisplayOrder[]> = {
     stmPending: stmPendingOrders,
     wcPending: wcPendingOrders,
     noContactMade: noContactMadeOrders,
