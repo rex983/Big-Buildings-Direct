@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useCallback, useEffect } from "react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -16,7 +16,6 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { StatusCheckbox } from "@/components/features/orders/status-checkbox";
 import {
   COLUMNS,
-  ACTIONS_COLUMN,
   type ColumnDef,
 } from "@/components/features/orders/orders-table-columns";
 import {
@@ -35,6 +34,7 @@ interface OrdersTableProps {
 const columnMap = new Map(COLUMNS.map((c) => [c.id, c]));
 
 export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
+  const router = useRouter();
   const { prefs, setColumnOrder, setColumnWidth, toggleColumnVisibility, resetPreferences } =
     useTablePreferences();
 
@@ -329,20 +329,15 @@ export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
                 />
               </TableHead>
             ))}
-            {/* Actions column — pinned last, not draggable */}
-            <TableHead
-              className={alignClass(ACTIONS_COLUMN.align)}
-              style={{
-                width:
-                  prefs.columnWidths[ACTIONS_COLUMN.id] ??
-                  ACTIONS_COLUMN.defaultWidth,
-              }}
-            />
           </TableRow>
         </TableHeader>
         <TableBody>
           {orders.map((order) => (
-            <TableRow key={order.id}>
+            <TableRow
+              key={order.id}
+              className="cursor-pointer hover:bg-muted/50"
+              onClick={() => router.push(`/orders/${order.id}`)}
+            >
               {orderedColumns.map((col) => (
                 <TableCell
                   key={col.id}
@@ -354,20 +349,6 @@ export function OrdersTable({ orders, canEditStatus }: OrdersTableProps) {
                   {renderCell(col.id, order)}
                 </TableCell>
               ))}
-              <TableCell
-                className={alignClass(ACTIONS_COLUMN.align)}
-                style={{
-                  width:
-                    prefs.columnWidths[ACTIONS_COLUMN.id] ??
-                    ACTIONS_COLUMN.defaultWidth,
-                }}
-              >
-                <Link href={`/orders/${order.id}`}>
-                  <Button variant="ghost" size="sm">
-                    View
-                  </Button>
-                </Link>
-              </TableCell>
             </TableRow>
           ))}
         </TableBody>
