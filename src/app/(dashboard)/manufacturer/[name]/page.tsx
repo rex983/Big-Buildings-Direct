@@ -10,7 +10,6 @@ import {
   getDetailStats,
   getDetailOrders,
   buildOrderWhere,
-  buildRevisionWhere,
 } from "@/lib/queries/detail-pages";
 
 export default async function ManufacturerDetailPage({
@@ -31,10 +30,9 @@ export default async function ManufacturerDetailPage({
   const decodedName = decodeURIComponent(name);
 
   const orderWhere = buildOrderWhere("manufacturer", decodedName);
-  const revisionWhere = buildRevisionWhere("manufacturer", decodedName);
 
   const [stats, orders, manufacturer] = await Promise.all([
-    getDetailStats(orderWhere, revisionWhere),
+    getDetailStats(orderWhere),
     getDetailOrders(orderWhere),
     prisma.manufacturer.findFirst({ where: { name: decodedName } }),
   ]);

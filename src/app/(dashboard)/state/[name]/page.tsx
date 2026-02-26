@@ -8,7 +8,6 @@ import {
   getDetailStats,
   getDetailOrders,
   buildOrderWhere,
-  buildRevisionWhere,
 } from "@/lib/queries/detail-pages";
 
 export default async function StateDetailPage({
@@ -29,10 +28,9 @@ export default async function StateDetailPage({
   const decodedName = decodeURIComponent(name);
 
   const orderWhere = buildOrderWhere("state", decodedName);
-  const revisionWhere = buildRevisionWhere("state", decodedName);
 
   const [stats, orders] = await Promise.all([
-    getDetailStats(orderWhere, revisionWhere),
+    getDetailStats(orderWhere),
     getDetailOrders(orderWhere),
   ]);
 

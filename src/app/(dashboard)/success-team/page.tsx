@@ -24,7 +24,6 @@ import {
   TicketTypeBadge,
   CreateTicketByOrderDialog,
 } from "@/components/features/tickets";
-import { CreateRevisionDialog } from "@/components/features/revisions";
 import { CancelOrderByLookupDialog } from "@/components/features/orders";
 import {
   getManufacturerOrders,
@@ -32,8 +31,6 @@ import {
   getWcStageOrders,
   getTickets,
   getTicketStats,
-  getRevisionsForBst,
-  getRevisionStats,
   getCancelledOrders,
   getCancellationStats,
   getTabCounts,
@@ -58,10 +55,6 @@ interface SearchParams {
   ttype?: string;
   tpriority?: string;
   assignedToMe?: string;
-  // Revisions
-  rpage?: string;
-  rsearch?: string;
-  rchangeType?: string;
   // Cancellations
   cpage?: string;
   csearch?: string;
@@ -126,8 +119,6 @@ export default async function SuccessTeamPage({
   let wcStageOrders;
   let ticketData;
   let ticketStats;
-  let revisionData;
-  let revisionStats;
   let cancellationData;
   let cancellationStats;
 
@@ -141,11 +132,6 @@ export default async function SuccessTeamPage({
     [ticketData, ticketStats] = await Promise.all([
       getTickets(params, user.id),
       getTicketStats(user.id),
-    ]);
-  } else if (activeTab === "revisions") {
-    [revisionData, revisionStats] = await Promise.all([
-      getRevisionsForBst(params),
-      getRevisionStats(),
     ]);
   } else if (activeTab === "cancellations") {
     [cancellationData, cancellationStats] = await Promise.all([
@@ -610,208 +596,6 @@ export default async function SuccessTeamPage({
     </div>
   );
 
-  // ============ Revisions Tab Content ============
-
-  const revisionsContent = (
-    <div className="space-y-6 mt-4">
-      {revisionStats && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Total Revisions
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{revisionStats.total}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Price Changes
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">{revisionStats.withPriceChange}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                Manufacturer Changes
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{revisionStats.withManufacturerChange}</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {revisionData && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <CardTitle>All Revisions</CardTitle>
-                <CreateRevisionDialog />
-              </div>
-              <form className="flex items-center gap-2">
-                <input type="hidden" name="tab" value="revisions" />
-                <input
-                  type="text"
-                  name="rsearch"
-                  placeholder="Search order #, customer, notes..."
-                  defaultValue={params.rsearch}
-                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm w-64"
-                />
-                <select
-                  name="rchangeType"
-                  defaultValue={params.rchangeType}
-                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
-                >
-                  <option value="">All Types</option>
-                  <option value="Change In Deposit Total">Price Changed</option>
-                  <option value="No Change In Deposit Total">No Price Change</option>
-                </select>
-                <Button type="submit" size="sm">
-                  Filter
-                </Button>
-                {(params.rsearch || params.rchangeType) && (
-                  <Link href="/success-team?tab=revisions">
-                    <Button type="button" variant="outline" size="sm">
-                      Clear
-                    </Button>
-                  </Link>
-                )}
-              </form>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {revisionData.revisions.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                No revisions found
-              </p>
-            ) : (
-              <>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Order #</TableHead>
-                      <TableHead>Customer</TableHead>
-                      <TableHead>Revision</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="text-center">Deposit</TableHead>
-                      <TableHead className="text-center">Sent to Customer</TableHead>
-                      <TableHead className="text-center">Signed</TableHead>
-                      <TableHead className="text-center">Sent to Mfr</TableHead>
-                      <TableHead>Price Change</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {revisionData.revisions.map((revision) => (
-                      <TableRow key={revision.id}>
-                        <TableCell className="font-medium">
-                          <Link
-                            href={`/orders/${revision.order.id}`}
-                            className="hover:underline text-primary"
-                          >
-                            {revision.order.orderNumber}
-                          </Link>
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <p>{revision.order.customerName}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {revision.order.customerEmail}
-                            </p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{revision.revisionNumber}</Badge>
-                        </TableCell>
-                        <TableCell>{formatDate(revision.revisionDate)}</TableCell>
-                        <TableCell className="text-center">
-                          <StatusIndicator
-                            completed={revision.depositCharge?.toLowerCase().includes("accepted") ?? false}
-                            label="Deposit Collected"
-                          />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <StatusIndicator completed={revision.sentToCustomer} label="Sent to Customer" />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <StatusIndicator completed={revision.customerSigned} label="Customer Signed" />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <StatusIndicator completed={revision.sentToManufacturer} label="Sent to Manufacturer" />
-                        </TableCell>
-                        <TableCell>
-                          {revision.depositDiff ? (
-                            <span
-                              className={
-                                Number(revision.depositDiff) >= 0
-                                  ? "text-green-600 dark:text-green-400"
-                                  : "text-red-600 dark:text-red-400"
-                              }
-                            >
-                              {Number(revision.depositDiff) >= 0 ? "+" : ""}
-                              {formatCurrency(revision.depositDiff.toString())}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Link href={`/revisions/${revision.id}`}>
-                            <Button variant="ghost" size="sm">
-                              View
-                            </Button>
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-
-                {revisionData.totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <p className="text-sm text-muted-foreground">
-                      Showing {(revisionData.page - 1) * 20 + 1} to {Math.min(revisionData.page * 20, revisionData.total)} of{" "}
-                      {revisionData.total} revisions
-                    </p>
-                    <div className="flex gap-2">
-                      {revisionData.page > 1 && (
-                        <Link
-                          href={`/success-team?tab=revisions&rpage=${revisionData.page - 1}&rsearch=${params.rsearch || ""}&rchangeType=${params.rchangeType || ""}`}
-                        >
-                          <Button variant="outline" size="sm">
-                            Previous
-                          </Button>
-                        </Link>
-                      )}
-                      {revisionData.page < revisionData.totalPages && (
-                        <Link
-                          href={`/success-team?tab=revisions&rpage=${revisionData.page + 1}&rsearch=${params.rsearch || ""}&rchangeType=${params.rchangeType || ""}`}
-                        >
-                          <Button variant="outline" size="sm">
-                            Next
-                          </Button>
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-
   // ============ Cancellations Tab Content ============
 
   const cancellationsContent = (
@@ -1018,7 +802,6 @@ export default async function SuccessTeamPage({
       <BstTabs
         pipelineContent={pipelineContent}
         ticketsContent={ticketsContent}
-        revisionsContent={revisionsContent}
         cancellationsContent={cancellationsContent}
         defaultTab={activeTab}
         tabCounts={tabCounts}

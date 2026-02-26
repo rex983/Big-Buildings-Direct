@@ -5,7 +5,6 @@ export interface DetailPageStats {
   totalSales: number;
   totalOrderAmount: number;
   totalDeposits: number;
-  totalRevisions: number;
 }
 
 export interface DetailPageOrder {
@@ -44,10 +43,9 @@ export async function getSalesRepByName(fullName: string) {
 }
 
 export async function getDetailStats(
-  orderWhere: Prisma.OrderWhereInput,
-  revisionWhere: Prisma.RevisionWhereInput
+  orderWhere: Prisma.OrderWhereInput
 ): Promise<DetailPageStats> {
-  const [salesAgg, depositAgg, revisionCount] = await Promise.all([
+  const [salesAgg, depositAgg] = await Promise.all([
     prisma.order.aggregate({
       where: { ...orderWhere, status: { not: "CANCELLED" } },
       _count: { id: true },
@@ -61,16 +59,12 @@ export async function getDetailStats(
       },
       _sum: { depositAmount: true },
     }),
-    prisma.revision.count({
-      where: revisionWhere,
-    }),
   ]);
 
   return {
     totalSales: salesAgg._count.id,
     totalOrderAmount: salesAgg._sum.totalPrice?.toNumber() || 0,
     totalDeposits: depositAgg._sum.depositAmount?.toNumber() || 0,
-    totalRevisions: revisionCount,
   };
 }
 
@@ -113,25 +107,6 @@ export function buildOrderWhere(
   }
   if (filterType === "manufacturer") {
     return { installer: value };
-  }
-  return {};
-}
-
-export function buildRevisionWhere(
-  filterType: "salesRep" | "state" | "manufacturer",
-  value: string,
-  salesRepId?: string
-): Prisma.RevisionWhereInput {
-  if (filterType === "salesRep" && salesRepId) {
-    return { salesRepId };
-  }
-  if (filterType === "state") {
-    return { order: { deliveryState: value } };
-  }
-  if (filterType === "manufacturer") {
-    return {
-      OR: [{ originalManufacturer: value }, { newManufacturer: value }],
-    };
   }
   return {};
 }

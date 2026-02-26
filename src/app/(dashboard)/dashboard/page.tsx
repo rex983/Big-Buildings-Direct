@@ -148,12 +148,6 @@ export default async function DashboardPage({
         apiEndpoint="/api/dashboard/analytics"
         year={year}
       />
-      <AnalyticsCharts
-        title={isTeamView ? "Revisions (Team)" : "Your Revisions"}
-        apiEndpoint="/api/dashboard/revisions-analytics"
-        year={year}
-      />
-
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">

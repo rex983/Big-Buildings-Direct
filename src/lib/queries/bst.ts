@@ -50,12 +50,6 @@ export interface TicketSearchParams {
   assignedToMe?: string;
 }
 
-export interface RevisionSearchParams {
-  rpage?: string;
-  rsearch?: string;
-  rchangeType?: string;
-}
-
 export interface CancellationSearchParams {
   cpage?: string;
   csearch?: string;
@@ -64,7 +58,6 @@ export interface CancellationSearchParams {
 export interface TabCounts {
   pipeline: number;
   tickets: number;
-  revisions: number;
   cancellations: number;
 }
 
@@ -391,81 +384,6 @@ export async function getTicketStats(userId: string) {
   return { open, inProgress, pending, assignedToMe };
 }
 
-// ============ Revisions Queries (BST-scoped) ============
-
-export async function getRevisionsForBst(params: RevisionSearchParams) {
-  const page = parseInt(params.rpage || "1", 10);
-  const pageSize = 20;
-  const skip = (page - 1) * pageSize;
-
-  const searchFilter = params.rsearch
-    ? {
-        OR: [
-          { order: { orderNumber: { contains: params.rsearch } } },
-          { order: { customerName: { contains: params.rsearch } } },
-          { revisionNotes: { contains: params.rsearch } },
-        ],
-      }
-    : {};
-
-  const changeTypeFilter = params.rchangeType
-    ? { changeInPrice: params.rchangeType }
-    : {};
-
-  const where = {
-    order: { sentToManufacturer: true },
-    ...searchFilter,
-    ...changeTypeFilter,
-  };
-
-  const [revisions, total] = await Promise.all([
-    prisma.revision.findMany({
-      where,
-      include: {
-        order: {
-          select: {
-            id: true,
-            orderNumber: true,
-            customerName: true,
-            customerEmail: true,
-          },
-        },
-        salesRep: {
-          select: { firstName: true, lastName: true },
-        },
-      },
-      orderBy: { revisionDate: "desc" },
-      skip,
-      take: pageSize,
-    }),
-    prisma.revision.count({ where }),
-  ]);
-
-  return {
-    revisions,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
-  };
-}
-
-export async function getRevisionStats() {
-  const bstScope = { order: { sentToManufacturer: true } };
-
-  const [total, withPriceChange, withManufacturerChange] = await Promise.all([
-    prisma.revision.count({ where: bstScope }),
-    prisma.revision.count({
-      where: { ...bstScope, changeInPrice: "Change In Deposit Total" },
-    }),
-    prisma.revision.count({
-      where: { ...bstScope, changingManufacturer: true },
-    }),
-  ]);
-
-  return { total, withPriceChange, withManufacturerChange };
-}
-
 // ============ Cancellations Queries ============
 
 export async function getCancelledOrders(params: CancellationSearchParams) {
@@ -534,20 +452,17 @@ export async function getCancellationStats() {
 // ============ Tab Counts (lightweight) ============
 
 export async function getTabCounts(userId: string): Promise<TabCounts> {
-  const [pipeline, tickets, revisions, cancellations] = await Promise.all([
+  const [pipeline, tickets, cancellations] = await Promise.all([
     prisma.order.count({
       where: { sentToManufacturer: true, status: { not: "CANCELLED" } },
     }),
     prisma.ticket.count({
       where: { status: { notIn: ["RESOLVED", "CLOSED"] } },
     }),
-    prisma.revision.count({
-      where: { order: { sentToManufacturer: true } },
-    }),
     prisma.order.count({
       where: { status: "CANCELLED" },
     }),
   ]);
 
-  return { pipeline, tickets, revisions, cancellations };
+  return { pipeline, tickets, cancellations };
 }

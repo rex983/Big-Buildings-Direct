@@ -7,14 +7,12 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 interface TabCounts {
   pipeline: number;
   tickets: number;
-  revisions: number;
   cancellations: number;
 }
 
 interface BstTabsProps {
   pipelineContent: React.ReactNode;
   ticketsContent: React.ReactNode;
-  revisionsContent: React.ReactNode;
   cancellationsContent: React.ReactNode;
   defaultTab?: string;
   tabCounts?: TabCounts;
@@ -23,7 +21,6 @@ interface BstTabsProps {
 export function BstTabs({
   pipelineContent,
   ticketsContent,
-  revisionsContent,
   cancellationsContent,
   defaultTab = "pipeline",
   tabCounts,
@@ -49,9 +46,6 @@ export function BstTabs({
         <TabsTrigger value="tickets">
           Tickets{tabCounts ? ` (${tabCounts.tickets})` : ""}
         </TabsTrigger>
-        <TabsTrigger value="revisions">
-          Revisions{tabCounts ? ` (${tabCounts.revisions})` : ""}
-        </TabsTrigger>
         <TabsTrigger value="cancellations">
           Cancellations{tabCounts ? ` (${tabCounts.cancellations})` : ""}
         </TabsTrigger>
@@ -61,9 +55,6 @@ export function BstTabs({
       </TabsContent>
       <TabsContent value="tickets">
         {ticketsContent}
-      </TabsContent>
-      <TabsContent value="revisions">
-        {revisionsContent}
       </TabsContent>
       <TabsContent value="cancellations">
         {cancellationsContent}

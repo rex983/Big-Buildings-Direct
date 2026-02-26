@@ -11,7 +11,6 @@ import {
   getDetailStats,
   getDetailOrders,
   buildOrderWhere,
-  buildRevisionWhere,
 } from "@/lib/queries/detail-pages";
 
 export default async function SalesRepDetailPage({
@@ -37,10 +36,9 @@ export default async function SalesRepDetailPage({
   }
 
   const orderWhere = buildOrderWhere("salesRep", decodedName, rep.id);
-  const revisionWhere = buildRevisionWhere("salesRep", decodedName, rep.id);
 
   const [stats, orders] = await Promise.all([
-    getDetailStats(orderWhere, revisionWhere),
+    getDetailStats(orderWhere),
     getDetailOrders(orderWhere),
   ]);
 

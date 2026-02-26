@@ -22,7 +22,7 @@ interface FileItem {
 }
 
 interface FileAttachmentsProps {
-  entityType: "order" | "ticket" | "revision";
+  entityType: "order" | "ticket";
   entityId: string;
   files: FileItem[];
   canUpload?: boolean;
@@ -70,7 +70,6 @@ const getFileIcon = (mimeType: string): string => {
 const ENTITY_ID_FIELD: Record<string, string> = {
   order: "orderId",
   ticket: "ticketId",
-  revision: "revisionId",
 };
 
 export function FileAttachments({

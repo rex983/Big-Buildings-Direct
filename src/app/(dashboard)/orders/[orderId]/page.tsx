@@ -45,9 +45,9 @@ export default async function OrderDetailPage({
     notFound();
   }
 
-  // Get BBD-specific data (messages, activities, files, documents, revisions) from Prisma
+  // Get BBD-specific data (messages, activities, files, documents) from Prisma
   // These may not exist yet if the order hasn't had any BBD interactions
-  const [messages, activities, files, documents, revisions] = await Promise.all([
+  const [messages, activities, files, documents] = await Promise.all([
     prisma.message
       .findMany({
         where: { orderId },
@@ -85,15 +85,6 @@ export default async function OrderDetailPage({
           createdBy: { select: { firstName: true, lastName: true } },
         },
         orderBy: { createdAt: "desc" },
-      })
-      .catch(() => []),
-    prisma.revision
-      .findMany({
-        where: { orderId },
-        include: {
-          salesRep: { select: { firstName: true, lastName: true } },
-        },
-        orderBy: { revisionDate: "desc" },
       })
       .catch(() => []),
   ]);
@@ -337,7 +328,6 @@ export default async function OrderDetailPage({
           <TabsTrigger value="documents">Documents ({documents.length})</TabsTrigger>
           <TabsTrigger value="messages">Messages ({messages.length})</TabsTrigger>
           <TabsTrigger value="activity">Activity ({activities.length})</TabsTrigger>
-          <TabsTrigger value="revisions">Revisions ({revisions.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="details">
@@ -480,80 +470,6 @@ export default async function OrderDetailPage({
           <OrderActivity activities={activities} />
         </TabsContent>
 
-        <TabsContent value="revisions">
-          <Card>
-            <CardHeader>
-              <CardTitle>Order Revisions</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {revisions.length === 0 ? (
-                <p className="text-muted-foreground text-center py-4">No revisions for this order</p>
-              ) : (
-                <div className="space-y-4">
-                  {revisions.map((revision) => (
-                    <div key={revision.id} className="border rounded-lg p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <Badge variant="outline">{revision.revisionNumber}</Badge>
-                          <span className="text-sm text-muted-foreground">
-                            {formatDate(revision.revisionDate)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {revision.changingManufacturer && (
-                            <Badge variant="warning">Mfr Change</Badge>
-                          )}
-                          {revision.changeInPrice === "Change In Deposit Total" ? (
-                            <Badge variant="info">Price Change</Badge>
-                          ) : (
-                            <Badge variant="secondary">Update</Badge>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        {revision.oldOrderTotal && (
-                          <div>
-                            <span className="text-muted-foreground block">Old Total</span>
-                            <span>{formatCurrency(revision.oldOrderTotal.toString())}</span>
-                          </div>
-                        )}
-                        {revision.newOrderTotal && (
-                          <div>
-                            <span className="text-muted-foreground block">New Total</span>
-                            <span>{formatCurrency(revision.newOrderTotal.toString())}</span>
-                          </div>
-                        )}
-                        {revision.depositDiff && (
-                          <div>
-                            <span className="text-muted-foreground block">Deposit Change</span>
-                            <span
-                              className={
-                                Number(revision.depositDiff) >= 0
-                                  ? "text-green-600"
-                                  : "text-red-600"
-                              }
-                            >
-                              {Number(revision.depositDiff) >= 0 ? "+" : ""}
-                              {formatCurrency(revision.depositDiff.toString())}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {revision.revisionNotes && (
-                        <div className="text-sm">
-                          <span className="text-muted-foreground">Notes: </span>
-                          <span>{revision.revisionNotes}</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
     </div>
   );

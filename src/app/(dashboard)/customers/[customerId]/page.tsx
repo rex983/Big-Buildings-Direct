@@ -17,7 +17,7 @@ import { getOrdersByCustomerEmail } from "@/lib/order-process";
 
 interface TimelineEvent {
   date: string;
-  type: "order_created" | "stage_change" | "ticket" | "revision" | "cancellation";
+  type: "order_created" | "stage_change" | "ticket" | "cancellation";
   description: string;
   orderNumber: string;
   orderId: string;
@@ -27,7 +27,6 @@ const timelineBadges: Record<TimelineEvent["type"], { label: string; className: 
   order_created: { label: "Order", className: "bg-blue-100 text-blue-800" },
   stage_change: { label: "Update", className: "bg-gray-100 text-gray-800" },
   ticket: { label: "Ticket", className: "bg-yellow-100 text-yellow-800" },
-  revision: { label: "Revision", className: "bg-purple-100 text-purple-800" },
   cancellation: { label: "Cancelled", className: "bg-red-100 text-red-800" },
 };
 
@@ -58,11 +57,11 @@ export default async function CustomerDetailPage({
   const totalValue = orders.reduce((sum, o) => sum + o.totalPrice, 0);
   const sentToMfr = orders.filter((o) => o.sentToManufacturer).length;
 
-  // Get BBD-specific data (tickets, revisions, activities) from Prisma
+  // Get BBD-specific data (tickets, activities) from Prisma
   // These are linked by order ID which is shared between Supabase and Prisma
   const orderIds = orders.map((o) => o.id);
 
-  const [tickets, revisions, activities] = await Promise.all([
+  const [tickets, activities] = await Promise.all([
     prisma.ticket.findMany({
       where: { orderId: { in: orderIds } },
       select: {
@@ -74,17 +73,6 @@ export default async function CustomerDetailPage({
         orderId: true,
       },
       orderBy: { createdAt: "desc" },
-    }),
-    prisma.revision.findMany({
-      where: { orderId: { in: orderIds } },
-      select: {
-        id: true,
-        revisionNumber: true,
-        revisionDate: true,
-        changeInPrice: true,
-        orderId: true,
-      },
-      orderBy: { revisionDate: "desc" },
     }),
     prisma.orderActivity.findMany({
       where: { orderId: { in: orderIds }, type: { not: "ORDER_CREATED" } },
@@ -143,16 +131,6 @@ export default async function CustomerDetailPage({
       description: `Ticket ${ticket.ticketNumber} created: ${ticket.subject}`,
       orderNumber: orderNumberMap.get(ticket.orderId) || "",
       orderId: ticket.orderId,
-    });
-  }
-
-  for (const revision of revisions) {
-    timeline.push({
-      date: revision.revisionDate.toISOString(),
-      type: "revision",
-      description: `Revision ${revision.revisionNumber}${revision.changeInPrice ? ` (${formatCurrency(Number(revision.changeInPrice))})` : ""}`,
-      orderNumber: orderNumberMap.get(revision.orderId) || "",
-      orderId: revision.orderId,
     });
   }
 

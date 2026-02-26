@@ -4,7 +4,7 @@ import type { DetailPageStats } from "@/lib/queries/detail-pages";
 
 export function DetailStatCards({ stats }: { stats: DetailPageStats }) {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
       <Card>
         <CardContent className="pt-6">
           <p className="text-sm text-muted-foreground">Total Sales</p>
@@ -32,14 +32,6 @@ export function DetailStatCards({ stats }: { stats: DetailPageStats }) {
           </p>
           <p className="text-xs text-muted-foreground mt-1">
             Collected deposits
-          </p>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="pt-6">
-          <p className="text-sm text-muted-foreground">Total Revisions</p>
-          <p className="text-2xl font-bold mt-1">
-            {stats.totalRevisions.toLocaleString()}
           </p>
         </CardContent>
       </Card>

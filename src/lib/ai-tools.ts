@@ -150,69 +150,7 @@ async function getOrderStats(params: {
     .sort((a, b) => b.count - a.count);
 }
 
-// ─── 3. getRevisions ─────────────────────────────────────────────
-async function getRevisions(params: {
-  dateFrom?: string;
-  dateTo?: string;
-  salesRepName?: string;
-  changingManufacturer?: boolean;
-  limit?: number;
-}) {
-  const where: Record<string, unknown> = {};
-  if (params.changingManufacturer !== undefined) where.changingManufacturer = params.changingManufacturer;
-  if (params.dateFrom || params.dateTo) {
-    where.revisionDate = {
-      ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
-      ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
-    };
-  }
-  if (params.salesRepName) {
-    where.salesRep = {
-      OR: [
-        { firstName: { contains: params.salesRepName, mode: "insensitive" } },
-        { lastName: { contains: params.salesRepName, mode: "insensitive" } },
-      ],
-    };
-  }
-
-  const revisions = await prisma.revision.findMany({
-    where,
-    select: {
-      id: true,
-      revisionNumber: true,
-      revisionDate: true,
-      changeInPrice: true,
-      oldOrderTotal: true,
-      newOrderTotal: true,
-      orderTotalDiff: true,
-      depositDiff: true,
-      changingManufacturer: true,
-      originalManufacturer: true,
-      newManufacturer: true,
-      sentToCustomer: true,
-      customerSigned: true,
-      sentToManufacturer: true,
-      depositCharge: true,
-      order: { select: { orderNumber: true, customerName: true } },
-      salesRep: { select: { firstName: true, lastName: true } },
-    },
-    orderBy: { revisionDate: "desc" },
-    take: Math.min(params.limit ?? MAX_RESULTS, MAX_RESULTS),
-  });
-
-  return decimalsToNumbers(
-    revisions.map((r) => ({
-      ...r,
-      orderNumber: r.order.orderNumber,
-      customerName: r.order.customerName,
-      salesRepName: r.salesRep ? `${r.salesRep.firstName} ${r.salesRep.lastName}` : null,
-      order: undefined,
-      salesRep: undefined,
-    }))
-  );
-}
-
-// ─── 4. getTickets ───────────────────────────────────────────────
+// ─── 3. getTickets ───────────────────────────────────────────────
 async function getTickets(params: {
   status?: string;
   type?: string;
@@ -524,20 +462,6 @@ export const aiToolDeclarations: FunctionDeclaration[] = [
     },
   },
   {
-    name: "getRevisions",
-    description: "List order revisions with financial diffs, manufacturer changes, and workflow status.",
-    parameters: {
-      type: SchemaType.OBJECT,
-      properties: {
-        dateFrom: { type: SchemaType.STRING, description: "Start date (ISO format)" },
-        dateTo: { type: SchemaType.STRING, description: "End date (ISO format)" },
-        salesRepName: { type: SchemaType.STRING, description: "Sales rep name (partial match)" },
-        changingManufacturer: { type: SchemaType.BOOLEAN, description: "Filter to manufacturer changes only" },
-        limit: { type: SchemaType.NUMBER, description: "Max results (default 50)" },
-      },
-    },
-  },
-  {
     name: "getTickets",
     description: "Search tickets (BST workflow) by status (OPEN, IN_PROGRESS, PENDING, RESOLVED, CLOSED), type (WELCOME_CALL, LPP, BUILDING_UPDATE, etc.), priority, or assignee.",
     parameters: {
@@ -621,7 +545,6 @@ export const aiToolDeclarations: FunctionDeclaration[] = [
 const toolFunctions: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
   getOrders: (p) => getOrders(p as Parameters<typeof getOrders>[0]),
   getOrderStats: (p) => getOrderStats(p as Parameters<typeof getOrderStats>[0]),
-  getRevisions: (p) => getRevisions(p as Parameters<typeof getRevisions>[0]),
   getTickets: (p) => getTickets(p as Parameters<typeof getTickets>[0]),
   getUsers: (p) => getUsers(p as Parameters<typeof getUsers>[0]),
   getPayData: (p) => getPayData(p as Parameters<typeof getPayData>[0]),

@@ -58,9 +58,6 @@ model User {
   // Password reset tokens
   passwordResetTokens PasswordResetToken[]
 
-  // Revisions (as sales rep)
-  revisions Revision[] @relation("RevisionSalesRep")
-
   // Tickets
   ticketsCreated   Ticket[] @relation("TicketCreator")
   ticketsAssigned  Ticket[] @relation("TicketAssignee")
@@ -243,7 +240,6 @@ model Order {
   documents      Document[]
   messages       Message[]
   emails         Email[]
-  revisions      Revision[]
   tickets        Ticket[]
 
   @@index([orderNumber])
@@ -324,75 +320,6 @@ model OrderActivity {
 }
 
 // ============================================
-// Order Revisions
-// ============================================
-
-model Revision {
-  id                  String    @id @default(cuid())
-  revisionNumber      String    // Revision1, Revision2, etc.
-  revisionDate        DateTime
-
-  // Price changes
-  changeInPrice       String?   // "Change In Deposit Total", "No Change In Deposit Total"
-  oldOrderTotal       Decimal?
-  newOrderTotal       Decimal?
-  oldDepositTotal     Decimal?
-  newDepositTotal     Decimal?
-  orderTotalDiff      Decimal?
-  depositDiff         Decimal?
-  revisionFee         Decimal?
-  totalCharge         Decimal?
-
-  // Customer info (may differ from order)
-  orderFormName       String?
-  customerEmail       String?
-
-  // Manufacturer change
-  changingManufacturer Boolean  @default(false)
-  originalManufacturer String?
-  newManufacturer      String?
-  newManufacturerEmail String?
-
-  // Workflow tracking
-  sentToCustomer       Boolean  @default(false)
-  customerSigned       Boolean  @default(false)
-  sentToManufacturer   Boolean  @default(false)
-
-  // Timestamps for workflow
-  lastEditedSTC        DateTime?
-  lastEditedSigned     DateTime?
-  lastEditedSTM        DateTime?
-  lastUpdateDepOT      DateTime?
-
-  // Forms and notes
-  formsSubmittedUrl    String?
-  sabrinaFormsUrl      String?
-  revisionNotes        String?
-  repNotes             String?
-
-  // Deposit charge status
-  depositCharge        String?
-  paymentMethod        String?   // "Credit Card", "ACH/Bank Transfer", "Check", "Cash", "Other"
-
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
-
-  // Relations
-  orderId String
-  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  salesRepId String?
-  salesRep   User?   @relation("RevisionSalesRep", fields: [salesRepId], references: [id])
-
-  files RevisionFile[]
-
-  @@index([orderId])
-  @@index([salesRepId])
-  @@index([revisionDate])
-  @@index([revisionNumber])
-}
-
-// ============================================
 // Files
 // ============================================
 
@@ -412,7 +339,6 @@ model File {
   // Relations
   orderFiles    OrderFile[]
   ticketFiles   TicketFile[]
-  revisionFiles RevisionFile[]
   documents     Document[]
 
   @@index([uploadedById])
@@ -439,18 +365,6 @@ model TicketFile {
   createdAt DateTime @default(now())
 
   @@index([ticketId])
-  @@index([fileId])
-}
-
-model RevisionFile {
-  id         String   @id @default(cuid())
-  revisionId String
-  fileId     String
-  revision   Revision @relation(fields: [revisionId], references: [id], onDelete: Cascade)
-  file       File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now())
-
-  @@index([revisionId])
   @@index([fileId])
 }
 

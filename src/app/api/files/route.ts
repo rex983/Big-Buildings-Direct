@@ -11,7 +11,6 @@ export async function POST(request: NextRequest) {
     const file = formData.get("file") as File | null;
     const orderId = formData.get("orderId") as string | null;
     const ticketId = formData.get("ticketId") as string | null;
-    const revisionId = formData.get("revisionId") as string | null;
     const category = (formData.get("category") as string) || "OTHER";
     const description = formData.get("description") as string | null;
 
@@ -92,16 +91,6 @@ export async function POST(request: NextRequest) {
           action: "FILE_ATTACHED",
           description: `File "${file.name}" was attached`,
           userId: user.id,
-        },
-      });
-    }
-
-    // Link to revision if provided
-    if (revisionId) {
-      await prisma.revisionFile.create({
-        data: {
-          revisionId,
-          fileId: fileRecord.id,
         },
       });
     }
