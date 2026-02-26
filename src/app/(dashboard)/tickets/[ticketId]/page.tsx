@@ -321,7 +321,7 @@ export default async function TicketDetailPage({
               )}
               <div>
                 <p className="text-sm text-muted-foreground">Total Price</p>
-                <p className="font-medium">{formatCurrency(ticket.order.totalPrice)}</p>
+                <p className="font-medium">{formatCurrency(Number(ticket.order.totalPrice))}</p>
               </div>
               {ticket.order.salesRep && (
                 <div>

@@ -55,7 +55,7 @@ async function main() {
     const ticketCreateData: any[] = [];
     const activityCreateData: any[] = [];
 
-    for (const row of batch) {
+    for (const row of batch as Record<string, string>[]) {
       const orderNumber = (row['Order Number'] || '').trim();
       const ticketingName = (row['Ticketing - Live Sept 1st'] || '').trim();
       const wcStatus = (row['WC Status'] || '').trim();
