@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AnalyticsCharts } from "@/components/features/dashboard/analytics-charts";
 import { StatusCheckbox } from "@/components/features/orders/status-checkbox";
 import { YearSelector } from "@/components/features/dashboard/year-selector";
+import { OrderProcessingLink } from "@/components/features/dashboard/order-processing-link";
 import {
   getOrderStats,
   getMonthlyBreakdown,
@@ -31,7 +32,7 @@ export default async function DashboardPage({
   // Statuses are managed by Order Processing — read-only in BBD
   const canEdit = false;
   const isTeamView = isAdminUser || canViewAll;
-  const orderProcessingUrl = process.env.NEXT_PUBLIC_ORDER_PROCESSING_URL || "https://big-buildings-direct-mj5l.vercel.app";
+
 
   // Determine filter scope:
   // - Admin: sees all orders (no filter)
@@ -157,21 +158,9 @@ export default async function DashboardPage({
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>
-              {orderProcessingUrl ? (
-                <a
-                  href={`${orderProcessingUrl}?email=${encodeURIComponent(user.email)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-primary hover:underline"
-                >
-                  {isTeamView ? "Team Orders" : "Your Orders"} — Not Yet Sent to Manufacturer
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                  </svg>
-                </a>
-              ) : (
-                <>{isTeamView ? "Team Orders" : "Your Orders"} — Not Yet Sent to Manufacturer</>
-              )}
+              <OrderProcessingLink>
+                {isTeamView ? "Team Orders" : "Your Orders"} — Not Yet Sent to Manufacturer
+              </OrderProcessingLink>
             </CardTitle>
             <span className="text-sm text-muted-foreground">{year}</span>
           </div>
