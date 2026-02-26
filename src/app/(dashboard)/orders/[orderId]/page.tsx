@@ -13,6 +13,8 @@ import { StatusCheckbox } from "@/components/features/orders/status-checkbox";
 import { OrderRealtimeListener } from "@/components/features/orders/order-realtime-listener";
 import { getOrder } from "@/lib/order-process";
 import { OP_STAGE_MAP, OP_STATUS_ORDER } from "@/types/order-process";
+import { getInteractionHistory } from "@/lib/queries/interaction-history";
+import { OrderInteractionHistory } from "@/components/features/orders/order-interaction-history";
 
 export default async function OrderDetailPage({
   params,
@@ -44,6 +46,9 @@ export default async function OrderDetailPage({
   if (!isAdminUser && !canViewAll && order.salesPerson !== userName) {
     notFound();
   }
+
+  // Get interaction history from Order Process Supabase tables
+  const interactionHistory = await getInteractionHistory(order);
 
   // Get BBD-specific data (messages, activities, files, documents) from Prisma
   // These may not exist yet if the order hasn't had any BBD interactions
@@ -320,6 +325,16 @@ export default async function OrderDetailPage({
           </CardContent>
         </Card>
       )}
+
+      {/* Interaction History */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Interaction History</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <OrderInteractionHistory items={interactionHistory} />
+        </CardContent>
+      </Card>
 
       {/* Tabs for BBD-specific features */}
       <Tabs defaultValue={defaultTab}>
