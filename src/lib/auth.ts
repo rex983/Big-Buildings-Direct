@@ -65,7 +65,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           roleName: user.role.name,
           permissions: user.role.permissions.map((rp) => rp.permission.name),
           office: user.office || undefined,
-          mustChangePassword: user.mustChangePassword,
         };
       },
     }),
@@ -81,16 +80,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.roleName = (user as SessionUser).roleName;
         token.permissions = (user as SessionUser).permissions;
         token.office = (user as SessionUser).office;
-        token.mustChangePassword = (user as SessionUser).mustChangePassword;
       }
 
-      // Handle session updates
+      // Handle session updates (for impersonation)
       if (trigger === "update" && updateSession) {
-        // Password changed — clear the forced-change flag
-        if (updateSession.passwordChanged === true) {
-          token.mustChangePassword = false;
-        }
-
         // Start impersonation
         if (updateSession.impersonatingAs) {
           // Store original user if not already impersonating
@@ -149,7 +142,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         roleName: token.roleName as string,
         permissions: token.permissions as string[],
         office: token.office as string | undefined,
-        mustChangePassword: token.mustChangePassword as boolean | undefined,
         originalUser: token.originalUser as BaseSessionUser | undefined,
         impersonatingAs: token.impersonatingAs as BaseSessionUser | undefined,
       } as SessionUser & { emailVerified: Date | null };

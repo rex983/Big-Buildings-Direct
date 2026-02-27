@@ -22,11 +22,10 @@ model User {
   avatar        String?
   office        String?   // "Marion Office" or "Harbor Office"
   department    String?   // e.g. "Sales", "Operations", "BST", "R&D"
-  isActive           Boolean   @default(true)
-  mustChangePassword Boolean   @default(false)
-  emailVerified      DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  isActive      Boolean   @default(true)
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   // Relations
   roleId String
@@ -59,9 +58,6 @@ model User {
   // Password reset tokens
   passwordResetTokens PasswordResetToken[]
 
-  // Password history
-  passwordHistory PasswordHistory[]
-
   // Tickets
   ticketsCreated   Ticket[] @relation("TicketCreator")
   ticketsAssigned  Ticket[] @relation("TicketAssignee")
@@ -90,17 +86,6 @@ model PasswordResetToken {
 
   @@index([token])
   @@index([userId])
-}
-
-model PasswordHistory {
-  id        String   @id @default(cuid())
-  password  String   // bcrypt hash
-  createdAt DateTime @default(now())
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId, createdAt])
 }
 
 // ============================================

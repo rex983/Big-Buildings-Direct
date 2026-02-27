@@ -10,7 +10,6 @@ import { Avatar } from "@/components/ui/avatar";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { getInitials, formatDate } from "@/lib/utils";
-import { ResetPasswordButton } from "@/components/features/team/reset-password-button";
 
 async function getUser(userId: string) {
   return prisma.user.findUnique({
@@ -565,20 +564,6 @@ export default async function UserDetailPage({
                   </Button>
                 </form>
               </div>
-
-              {isAdmin && user.id !== currentUser.id && (
-                <div className="pt-6 border-t">
-                  <h4 className="font-medium mb-2">Password Reset</h4>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Generate a temporary password for this user. They will be
-                    required to set a new password on their next login.
-                  </p>
-                  <ResetPasswordButton
-                    userId={user.id}
-                    userName={`${user.firstName} ${user.lastName}`}
-                  />
-                </div>
-              )}
 
               {canDelete && (
                 <div className="pt-6 border-t">

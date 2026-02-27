@@ -30,7 +30,6 @@ export type BaseSessionUser = {
   roleName: string;
   permissions: string[];
   office?: string;
-  mustChangePassword?: boolean;
 };
 
 export type SessionUser = BaseSessionUser & {
