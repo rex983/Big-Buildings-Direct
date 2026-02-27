@@ -1,4 +1,7 @@
 import { prisma } from "./prisma";
+import { supabaseAdmin } from "./supabase";
+import { mapToDisplay } from "./order-process";
+import type { OPOrderRow, OPOrderStatus } from "@/types/order-process";
 import type { FunctionDeclaration } from "@google/generative-ai";
 import { SchemaType } from "@google/generative-ai";
 
@@ -19,7 +22,32 @@ function decimalsToNumbers<T extends Record<string, unknown>>(rows: T[]): T[] {
   });
 }
 
-// ─── 1. getOrders ────────────────────────────────────────────────
+// Helper: flatten a DisplayOrder to a simple flat object for AI consumption
+function flattenForAI(row: OPOrderRow) {
+  const d = mapToDisplay(row);
+  return {
+    id: d.id,
+    orderNumber: d.orderNumber,
+    status: d.status,
+    customerName: d.customerName,
+    customerEmail: d.customerEmail,
+    customerPhone: d.customerPhone,
+    buildingType: d.buildingType,
+    buildingSize: d.buildingSize,
+    manufacturer: d.manufacturer,
+    deliveryState: d.deliveryState,
+    totalPrice: d.totalPrice,
+    depositAmount: d.depositAmount,
+    depositCollected: d.depositCollected,
+    paymentStatus: d.paymentStatus,
+    salesPerson: d.salesPerson,
+    cancelReason: d.cancelReason,
+    cancelledAt: d.cancelledAt,
+    createdAt: d.createdAt,
+  };
+}
+
+// ─── 1. getOrders (Supabase) ────────────────────────────────────────
 async function getOrders(params: {
   status?: string;
   dateFrom?: string;
@@ -28,117 +56,112 @@ async function getOrders(params: {
   customerName?: string;
   buildingType?: string;
   state?: string;
-  installer?: string;
+  manufacturer?: string;
+  orderNumber?: string;
   limit?: number;
 }) {
-  const where: Record<string, unknown> = {};
-  if (params.status) where.status = params.status;
-  if (params.buildingType) where.buildingType = { contains: params.buildingType, mode: "insensitive" };
-  if (params.state) where.deliveryState = { contains: params.state, mode: "insensitive" };
-  if (params.installer) where.installer = { contains: params.installer, mode: "insensitive" };
-  if (params.customerName) where.customerName = { contains: params.customerName, mode: "insensitive" };
-  if (params.dateFrom || params.dateTo) {
-    where.dateSold = {
-      ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
-      ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
-    };
+  let query = supabaseAdmin.from("orders").select("*");
+
+  if (params.status) {
+    query = query.eq("status", params.status as OPOrderStatus);
+  }
+  if (params.orderNumber) {
+    query = query.ilike("order_number", `%${params.orderNumber}%`);
+  }
+  if (params.customerName) {
+    const term = `%${params.customerName}%`;
+    query = query.or(
+      `customer->>firstName.ilike.${term},customer->>lastName.ilike.${term}`
+    );
   }
   if (params.salesRepName) {
-    where.salesRep = {
-      OR: [
-        { firstName: { contains: params.salesRepName, mode: "insensitive" } },
-        { lastName: { contains: params.salesRepName, mode: "insensitive" } },
-      ],
-    };
+    query = query.ilike("sales_person", `%${params.salesRepName}%`);
+  }
+  if (params.buildingType) {
+    query = query.ilike("building->>buildingType", `%${params.buildingType}%`);
+  }
+  if (params.state) {
+    query = query.ilike("customer->>state", `%${params.state}%`);
+  }
+  if (params.manufacturer) {
+    query = query.ilike("building->>manufacturer", `%${params.manufacturer}%`);
+  }
+  if (params.dateFrom) {
+    query = query.gte("created_at", `${params.dateFrom}T00:00:00.000Z`);
+  }
+  if (params.dateTo) {
+    const end = new Date(params.dateTo);
+    end.setDate(end.getDate() + 1);
+    query = query.lt("created_at", end.toISOString());
   }
 
-  const orders = await prisma.order.findMany({
-    where,
-    select: {
-      id: true,
-      orderNumber: true,
-      customerName: true,
-      buildingType: true,
-      buildingSize: true,
-      deliveryState: true,
-      deliveryCity: true,
-      totalPrice: true,
-      depositAmount: true,
-      depositCollected: true,
-      status: true,
-      priority: true,
-      installer: true,
-      dateSold: true,
-      createdAt: true,
-      cancelledAt: true,
-      cancelReason: true,
-      salesRep: { select: { firstName: true, lastName: true } },
-    },
-    orderBy: { createdAt: "desc" },
-    take: Math.min(params.limit ?? MAX_RESULTS, MAX_RESULTS),
-  });
+  query = query
+    .order("created_at", { ascending: false })
+    .limit(Math.min(params.limit ?? MAX_RESULTS, MAX_RESULTS));
 
-  return decimalsToNumbers(
-    orders.map((o) => ({
-      ...o,
-      salesRepName: o.salesRep ? `${o.salesRep.firstName} ${o.salesRep.lastName}` : null,
-      salesRep: undefined,
-    }))
-  );
+  const { data, error } = await query;
+  if (error) throw new Error(`getOrders error: ${error.message}`);
+
+  return ((data || []) as OPOrderRow[]).map(flattenForAI);
 }
 
-// ─── 2. getOrderStats ────────────────────────────────────────────
+// ─── 2. getOrderStats (Supabase) ────────────────────────────────────
 async function getOrderStats(params: {
   groupBy?: string;
   dateFrom?: string;
   dateTo?: string;
   status?: string;
 }) {
-  const where: Record<string, unknown> = {};
-  if (params.status) where.status = params.status;
-  if (params.dateFrom || params.dateTo) {
-    where.dateSold = {
-      ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
-      ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
-    };
+  let query = supabaseAdmin
+    .from("orders")
+    .select("status, pricing, customer, building, sales_person, created_at");
+
+  if (params.status) {
+    query = query.eq("status", params.status as OPOrderStatus);
+  }
+  if (params.dateFrom) {
+    query = query.gte("created_at", `${params.dateFrom}T00:00:00.000Z`);
+  }
+  if (params.dateTo) {
+    const end = new Date(params.dateTo);
+    end.setDate(end.getDate() + 1);
+    query = query.lt("created_at", end.toISOString());
   }
 
-  const orders = await prisma.order.findMany({
-    where,
-    select: {
-      status: true,
-      totalPrice: true,
-      buildingType: true,
-      deliveryState: true,
-      dateSold: true,
-      salesRep: { select: { firstName: true, lastName: true } },
-    },
-  });
+  const { data, error } = await query;
+  if (error) throw new Error(`getOrderStats error: ${error.message}`);
+
+  const rows = (data || []) as Pick<
+    OPOrderRow,
+    "status" | "pricing" | "customer" | "building" | "sales_person" | "created_at"
+  >[];
 
   const groupKey = params.groupBy || "status";
   const groups: Record<string, { count: number; totalRevenue: number }> = {};
 
-  for (const o of orders) {
+  for (const o of rows) {
     let key: string;
     switch (groupKey) {
       case "month":
-        key = o.dateSold ? `${o.dateSold.getFullYear()}-${String(o.dateSold.getMonth() + 1).padStart(2, "0")}` : "No Date";
+        key = o.created_at
+          ? `${new Date(o.created_at).getFullYear()}-${String(new Date(o.created_at).getMonth() + 1).padStart(2, "0")}`
+          : "No Date";
         break;
       case "salesRep":
-        key = o.salesRep ? `${o.salesRep.firstName} ${o.salesRep.lastName}` : "Unassigned";
+        key = o.sales_person || "Unassigned";
         break;
       case "buildingType":
-        key = o.buildingType || "Unknown";
+        key = o.building?.buildingType || "Unknown";
         break;
       case "state":
-        key = o.deliveryState || "Unknown";
+        key = o.customer?.state || "Unknown";
         break;
       default:
         key = o.status;
     }
     if (!groups[key]) groups[key] = { count: 0, totalRevenue: 0 };
     groups[key].count++;
-    groups[key].totalRevenue += o.totalPrice ? Number(o.totalPrice) : 0;
+    groups[key].totalRevenue += o.pricing?.subtotalBeforeTax || 0;
   }
 
   return Object.entries(groups)
@@ -150,7 +173,7 @@ async function getOrderStats(params: {
     .sort((a, b) => b.count - a.count);
 }
 
-// ─── 3. getTickets ───────────────────────────────────────────────
+// ─── 3. getTickets (Prisma — unchanged) ─────────────────────────────
 async function getTickets(params: {
   status?: string;
   type?: string;
@@ -203,7 +226,7 @@ async function getTickets(params: {
   }));
 }
 
-// ─── 6. getUsers ─────────────────────────────────────────────────
+// ─── 4. getUsers (Prisma — unchanged) ───────────────────────────────
 async function getUsers(params: {
   role?: string;
   office?: string;
@@ -248,7 +271,7 @@ async function getUsers(params: {
   }));
 }
 
-// ─── 7. getPayData ───────────────────────────────────────────────
+// ─── 5. getPayData (Prisma — unchanged) ─────────────────────────────
 async function getPayData(params: {
   month?: number;
   year?: number;
@@ -298,93 +321,97 @@ async function getPayData(params: {
   );
 }
 
-// ─── 8. getDepositStatus ─────────────────────────────────────────
+// ─── 6. getDepositStatus (Supabase) ─────────────────────────────────
 async function getDepositStatus(params: {
-  collected?: boolean;
-  chargeStatus?: string;
+  paymentStatus?: string;
+  salesRepName?: string;
   limit?: number;
 }) {
-  const where: Record<string, unknown> = {};
-  if (params.collected !== undefined) where.depositCollected = params.collected;
-  if (params.chargeStatus) where.depositChargeStatus = { contains: params.chargeStatus, mode: "insensitive" };
+  let query = supabaseAdmin.from("orders").select("*");
 
-  const orders = await prisma.order.findMany({
-    where,
-    select: {
-      orderNumber: true,
-      customerName: true,
-      totalPrice: true,
-      depositAmount: true,
-      depositCollected: true,
-      depositChargeStatus: true,
-      depositDate: true,
-      depositPercentage: true,
-      depositNotes: true,
-      status: true,
-      salesRep: { select: { firstName: true, lastName: true } },
-    },
-    orderBy: { createdAt: "desc" },
-    take: Math.min(params.limit ?? MAX_RESULTS, MAX_RESULTS),
+  if (params.paymentStatus) {
+    if (params.paymentStatus === "paid") {
+      query = query.or("payment->>status.eq.paid,payment->>status.eq.manually_approved");
+    } else {
+      query = query.eq("payment->>status", params.paymentStatus);
+    }
+  }
+  if (params.salesRepName) {
+    query = query.ilike("sales_person", `%${params.salesRepName}%`);
+  }
+
+  query = query
+    .order("created_at", { ascending: false })
+    .limit(Math.min(params.limit ?? MAX_RESULTS, MAX_RESULTS));
+
+  const { data, error } = await query;
+  if (error) throw new Error(`getDepositStatus error: ${error.message}`);
+
+  return ((data || []) as OPOrderRow[]).map((row) => {
+    const d = mapToDisplay(row);
+    return {
+      orderNumber: d.orderNumber,
+      customerName: d.customerName,
+      status: d.status,
+      totalPrice: d.totalPrice,
+      depositAmount: d.depositAmount,
+      depositCollected: d.depositCollected,
+      depositDate: d.depositDate,
+      paymentType: d.paymentType,
+      paymentStatus: d.paymentStatus,
+      salesPerson: d.salesPerson,
+    };
   });
-
-  return decimalsToNumbers(
-    orders.map((o) => ({
-      ...o,
-      salesRepName: o.salesRep ? `${o.salesRep.firstName} ${o.salesRep.lastName}` : null,
-      salesRep: undefined,
-    }))
-  );
 }
 
-// ─── 9. getCancellations ─────────────────────────────────────────
+// ─── 7. getCancellations (Supabase) ─────────────────────────────────
 async function getCancellations(params: {
   dateFrom?: string;
   dateTo?: string;
   salesRepName?: string;
   limit?: number;
 }) {
-  const where: Record<string, unknown> = { status: "CANCELLED" };
-  if (params.dateFrom || params.dateTo) {
-    where.cancelledAt = {
-      ...(params.dateFrom ? { gte: new Date(params.dateFrom) } : {}),
-      ...(params.dateTo ? { lte: new Date(params.dateTo) } : {}),
-    };
+  let query = supabaseAdmin
+    .from("orders")
+    .select("*")
+    .eq("status", "cancelled" as OPOrderStatus);
+
+  if (params.dateFrom) {
+    query = query.gte("cancelled_at", `${params.dateFrom}T00:00:00.000Z`);
+  }
+  if (params.dateTo) {
+    const end = new Date(params.dateTo);
+    end.setDate(end.getDate() + 1);
+    query = query.lt("cancelled_at", end.toISOString());
   }
   if (params.salesRepName) {
-    where.salesRep = {
-      OR: [
-        { firstName: { contains: params.salesRepName, mode: "insensitive" } },
-        { lastName: { contains: params.salesRepName, mode: "insensitive" } },
-      ],
-    };
+    query = query.ilike("sales_person", `%${params.salesRepName}%`);
   }
 
-  const orders = await prisma.order.findMany({
-    where,
-    select: {
-      orderNumber: true,
-      customerName: true,
-      buildingType: true,
-      totalPrice: true,
-      cancelReason: true,
-      cancelledAt: true,
-      dateSold: true,
-      salesRep: { select: { firstName: true, lastName: true } },
-    },
-    orderBy: { cancelledAt: "desc" },
-    take: Math.min(params.limit ?? MAX_RESULTS, MAX_RESULTS),
-  });
+  query = query
+    .order("cancelled_at", { ascending: false })
+    .limit(Math.min(params.limit ?? MAX_RESULTS, MAX_RESULTS));
 
-  return decimalsToNumbers(
-    orders.map((o) => ({
-      ...o,
-      salesRepName: o.salesRep ? `${o.salesRep.firstName} ${o.salesRep.lastName}` : null,
-      salesRep: undefined,
-    }))
-  );
+  const { data, error } = await query;
+  if (error) throw new Error(`getCancellations error: ${error.message}`);
+
+  return ((data || []) as OPOrderRow[]).map((row) => {
+    const d = mapToDisplay(row);
+    return {
+      orderNumber: d.orderNumber,
+      customerName: d.customerName,
+      buildingType: d.buildingType,
+      totalPrice: d.totalPrice,
+      salesPerson: d.salesPerson,
+      cancelReason: row.cancel_reason || null,
+      cancelledAt: row.cancelled_at || null,
+      cancelledByEmail: row.cancelled_by_email || null,
+      createdAt: d.createdAt,
+    };
+  });
 }
 
-// ─── 10. getCustomers ────────────────────────────────────────────
+// ─── 8. getCustomers (Prisma — unchanged) ───────────────────────────
 async function getCustomers(params: {
   name?: string;
   email?: string;
@@ -427,23 +454,72 @@ async function getCustomers(params: {
   }));
 }
 
-// ─── Gemini Tool Declarations ────────────────────────────────────
+// ─── 9. getChangeOrders (Supabase — new) ────────────────────────────
+async function getChangeOrders(params: {
+  orderId?: string;
+  status?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  limit?: number;
+}) {
+  let query = supabaseAdmin.from("change_orders").select("*");
+
+  if (params.orderId) {
+    query = query.eq("orderId", params.orderId);
+  }
+  if (params.status) {
+    query = query.eq("status", params.status);
+  }
+  if (params.dateFrom) {
+    query = query.gte("createdAt", `${params.dateFrom}T00:00:00.000Z`);
+  }
+  if (params.dateTo) {
+    const end = new Date(params.dateTo);
+    end.setDate(end.getDate() + 1);
+    query = query.lt("createdAt", end.toISOString());
+  }
+
+  query = query
+    .order("createdAt", { ascending: false })
+    .limit(Math.min(params.limit ?? MAX_RESULTS, MAX_RESULTS));
+
+  const { data, error } = await query;
+  if (error) throw new Error(`getChangeOrders error: ${error.message}`);
+
+  return ((data || []) as Record<string, unknown>[]).map((co) => ({
+    id: co.id,
+    changeOrderNumber: co.changeOrderNumber,
+    orderId: co.orderId,
+    orderNumber: co.orderNumber,
+    status: co.status,
+    reason: co.reason || null,
+    totalDiff: (co.differences as Record<string, unknown>)?.totalDiff ?? null,
+    depositDiff: (co.differences as Record<string, unknown>)?.depositDiff ?? null,
+    signedAt: co.signedAt || null,
+    cancelledAt: co.cancelledAt || null,
+    cancelledReason: co.cancelledReason || null,
+    createdAt: co.createdAt,
+  }));
+}
+
+// ─── Gemini Tool Declarations ────────────────────────────────────────
 
 export const aiToolDeclarations: FunctionDeclaration[] = [
   {
     name: "getOrders",
-    description: "Search and filter orders by status, date range, sales rep, customer, building type, state, or installer. Returns up to 50 orders with key details.",
+    description: "Search and filter orders by status, date range, sales person, customer, building type, state, manufacturer, or order number. Returns up to 50 orders with key details.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
-        status: { type: SchemaType.STRING, description: "Order status: ACTIVE, COMPLETED, CANCELLED, or ON_HOLD" },
+        status: { type: SchemaType.STRING, description: "Order status: draft, pending_payment, sent_for_signature, signed, ready_for_manufacturer, or cancelled" },
         dateFrom: { type: SchemaType.STRING, description: "Start date (ISO format, e.g. 2025-01-01)" },
         dateTo: { type: SchemaType.STRING, description: "End date (ISO format)" },
-        salesRepName: { type: SchemaType.STRING, description: "Sales rep first or last name" },
-        customerName: { type: SchemaType.STRING, description: "Customer name (partial match)" },
+        salesRepName: { type: SchemaType.STRING, description: "Sales person name (partial match)" },
+        customerName: { type: SchemaType.STRING, description: "Customer first or last name (partial match)" },
         buildingType: { type: SchemaType.STRING, description: "Building type (partial match)" },
         state: { type: SchemaType.STRING, description: "Delivery state (partial match)" },
-        installer: { type: SchemaType.STRING, description: "Installer name (partial match)" },
+        manufacturer: { type: SchemaType.STRING, description: "Manufacturer/installer name (partial match)" },
+        orderNumber: { type: SchemaType.STRING, description: "Order number (partial match)" },
         limit: { type: SchemaType.NUMBER, description: "Max results (default 50)" },
       },
     },
@@ -457,7 +533,7 @@ export const aiToolDeclarations: FunctionDeclaration[] = [
         groupBy: { type: SchemaType.STRING, description: "Group by: status, month, salesRep, buildingType, or state" },
         dateFrom: { type: SchemaType.STRING, description: "Start date (ISO format)" },
         dateTo: { type: SchemaType.STRING, description: "End date (ISO format)" },
-        status: { type: SchemaType.STRING, description: "Filter to specific status before grouping" },
+        status: { type: SchemaType.STRING, description: "Filter to specific status: draft, pending_payment, sent_for_signature, signed, ready_for_manufacturer, or cancelled" },
       },
     },
   },
@@ -503,25 +579,25 @@ export const aiToolDeclarations: FunctionDeclaration[] = [
   },
   {
     name: "getDepositStatus",
-    description: "Get deposit collection tracking across orders. Filter by collected status or charge status (Ready, Charged, Declined, Refunded, Accepted After Decline).",
+    description: "Get deposit/payment tracking across orders. Filter by payment status (paid, manually_approved, pending, unpaid) or sales person.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
-        collected: { type: SchemaType.BOOLEAN, description: "Filter by deposit collected (true/false)" },
-        chargeStatus: { type: SchemaType.STRING, description: "Deposit charge status (partial match)" },
+        paymentStatus: { type: SchemaType.STRING, description: "Payment status: paid (includes manually_approved), pending, or unpaid" },
+        salesRepName: { type: SchemaType.STRING, description: "Sales person name (partial match)" },
         limit: { type: SchemaType.NUMBER, description: "Max results (default 50)" },
       },
     },
   },
   {
     name: "getCancellations",
-    description: "Get cancelled orders with cancel reasons, dates, and sales rep info.",
+    description: "Get cancelled orders with cancel reason, cancelled date, who cancelled, and sales person info.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
-        dateFrom: { type: SchemaType.STRING, description: "Start date (ISO format)" },
+        dateFrom: { type: SchemaType.STRING, description: "Start date (ISO format) — filters by cancelled_at date" },
         dateTo: { type: SchemaType.STRING, description: "End date (ISO format)" },
-        salesRepName: { type: SchemaType.STRING, description: "Sales rep name (partial match)" },
+        salesRepName: { type: SchemaType.STRING, description: "Sales person name (partial match)" },
         limit: { type: SchemaType.NUMBER, description: "Max results (default 50)" },
       },
     },
@@ -538,9 +614,23 @@ export const aiToolDeclarations: FunctionDeclaration[] = [
       },
     },
   },
+  {
+    name: "getChangeOrders",
+    description: "Get change orders (modifications to existing orders). Shows reason, price/deposit changes, status (draft, pending_signature, signed, cancelled), and dates.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        orderId: { type: SchemaType.STRING, description: "Filter to a specific order's change orders (UUID)" },
+        status: { type: SchemaType.STRING, description: "Change order status: draft, pending_signature, signed, or cancelled" },
+        dateFrom: { type: SchemaType.STRING, description: "Start date (ISO format)" },
+        dateTo: { type: SchemaType.STRING, description: "End date (ISO format)" },
+        limit: { type: SchemaType.NUMBER, description: "Max results (default 50)" },
+      },
+    },
+  },
 ];
 
-// ─── Dispatcher ──────────────────────────────────────────────────
+// ─── Dispatcher ──────────────────────────────────────────────────────
 
 const toolFunctions: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
   getOrders: (p) => getOrders(p as Parameters<typeof getOrders>[0]),
@@ -551,6 +641,7 @@ const toolFunctions: Record<string, (params: Record<string, unknown>) => Promise
   getDepositStatus: (p) => getDepositStatus(p as Parameters<typeof getDepositStatus>[0]),
   getCancellations: (p) => getCancellations(p as Parameters<typeof getCancellations>[0]),
   getCustomers: (p) => getCustomers(p as Parameters<typeof getCustomers>[0]),
+  getChangeOrders: (p) => getChangeOrders(p as Parameters<typeof getChangeOrders>[0]),
 };
 
 export async function executeAiTool(
