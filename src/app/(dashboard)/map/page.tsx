@@ -20,6 +20,8 @@ interface OrderLocation {
   dateSold: string | null;
   sentToManufacturer: boolean;
   salesPerson: string;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 interface GeoCache {
@@ -213,7 +215,8 @@ export default function MapPage() {
     fetchOrders();
   }, []);
 
-  // Geocode all orders — progressively update state so pins appear as they're resolved
+  // Geocode all orders — use DB coords first, then localStorage cache, then Nominatim.
+  // After geocoding, save new coords back to the server for all future users.
   useEffect(() => {
     if (allOrders.length === 0) return;
     let cancelled = false;
@@ -221,7 +224,7 @@ export default function MapPage() {
     const cacheKey = "order-geocode-cache";
     let geoCache: GeoCache = {};
     try {
-      const cached = sessionStorage.getItem(cacheKey);
+      const cached = localStorage.getItem(cacheKey);
       if (cached) geoCache = JSON.parse(cached);
     } catch { /* ignore */ }
 
@@ -229,11 +232,25 @@ export default function MapPage() {
 
     async function geocodeAll() {
       const results: Record<string, { lat: number; lng: number }> = {};
+      const newlyGeocoded: { id: string; lat: number; lng: number }[] = [];
       let completed = 0;
       let batchCount = 0;
 
       for (const order of allOrders) {
         if (cancelled) break;
+
+        // 1. Use DB coordinates if available (instant, no geocoding needed)
+        if (order.latitude != null && order.longitude != null) {
+          results[order.id] = { lat: order.latitude, lng: order.longitude };
+          completed++;
+          batchCount++;
+          setGeocodeProgress({ done: completed, total: allOrders.length });
+          if (batchCount >= 50) {
+            if (!cancelled) setGeocodedOrders((prev) => ({ ...prev, ...results }));
+            batchCount = 0;
+          }
+          continue;
+        }
 
         // Skip orders with no address data at all
         if (!order.deliveryAddress && !order.deliveryCity && !order.deliveryState && !order.deliveryZip) {
@@ -242,10 +259,12 @@ export default function MapPage() {
           continue;
         }
 
+        // 2. Check localStorage cache
         const addressKey = `${order.deliveryAddress}|${order.deliveryCity}|${order.deliveryState}|${order.deliveryZip}`;
         let coords = geoCache[addressKey];
         let wasCached = coords !== undefined;
 
+        // 3. Geocode via Nominatim if not cached
         if (!wasCached) {
           coords = await geocodeAddress(
             order.deliveryAddress,
@@ -254,7 +273,7 @@ export default function MapPage() {
             order.deliveryZip
           );
           geoCache[addressKey] = coords;
-          try { sessionStorage.setItem(cacheKey, JSON.stringify(geoCache)); } catch { /* ignore */ }
+          try { localStorage.setItem(cacheKey, JSON.stringify(geoCache)); } catch { /* ignore */ }
         }
 
         completed++;
@@ -263,19 +282,17 @@ export default function MapPage() {
 
         if (coords) {
           results[order.id] = coords;
+          // Track for DB write-back (both newly geocoded and localStorage-cached)
+          if (order.latitude == null) {
+            newlyGeocoded.push({ id: order.id, lat: coords.lat, lng: coords.lng });
+          }
         }
 
-        // Push updates to the map progressively: every 10 cached hits or after every geocode call
+        // Push updates to the map progressively
         if (!wasCached || batchCount >= 10) {
-          if (!cancelled) {
-            setGeocodedOrders((prev) => ({ ...prev, ...results }));
-          }
+          if (!cancelled) setGeocodedOrders((prev) => ({ ...prev, ...results }));
           batchCount = 0;
-
-          // Rate limit only for non-cached requests
-          if (!wasCached) {
-            await new Promise((r) => setTimeout(r, 1050));
-          }
+          if (!wasCached) await new Promise((r) => setTimeout(r, 1050));
         }
       }
 
@@ -283,6 +300,15 @@ export default function MapPage() {
         // Final flush
         setGeocodedOrders((prev) => ({ ...prev, ...results }));
         setGeocodingDone(true);
+
+        // Save newly geocoded coordinates to the database (fire-and-forget)
+        if (newlyGeocoded.length > 0) {
+          fetch("/api/orders/locations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ coords: newlyGeocoded }),
+          }).catch(() => { /* silent — localStorage still has the cache */ });
+        }
       }
     }
 

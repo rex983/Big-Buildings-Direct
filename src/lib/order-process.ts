@@ -580,6 +580,8 @@ interface OrderLocation {
   dateSold: string | null;
   sentToManufacturer: boolean;
   salesPerson: string;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 /** Get order locations for the map page. */
@@ -622,6 +624,8 @@ export async function getOrderLocations(opts?: {
     dateSold: row.created_at,
     sentToManufacturer: row.status === "ready_for_manufacturer",
     salesPerson: row.sales_person || "",
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
   }));
 }
 

@@ -140,6 +140,8 @@ export interface OPOrderRow {
   wc_status_date?: string;
   lpp_status?: string;
   lpp_status_date?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 // ── Display-friendly shape consumed by BBD pages ──────────────────────
